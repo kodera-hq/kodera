@@ -431,7 +431,9 @@ function MessageTimelineView({
                       : undefined
                   }
                   document={documents.find(
-                    (doc) => doc.id === row.message.document?.id && doc.channelId === channelId
+                    (doc) =>
+                      doc.id === row.message.document?.id &&
+                      (doc.channelId === channelId || doc.id.startsWith('workspace-page:'))
                   )}
                   onOpenDocument={onOpenDocument}
                   message={row.message}

@@ -32,15 +32,16 @@ it('previews the three categories and fifteen planned channels, preserves truthf
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(entry).toHaveFocus()
 })
-it('opens the actual hub from Hosting & Offer and returns to its associated community preview', async () => {
+it('opens the canonical documentation portal from the community preview', async () => {
   const user = userEvent.setup()
   render(<HostingOfferPanel />)
   await user.click(screen.getByText('Hébergement & Offre'))
   await user.click(screen.getByRole('button', { name: 'Communauté · community.kodera.io' }))
-  await user.click(screen.getByRole('button', { name: 'Ouvrir la documentation développeur' }))
-  expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Ouvrir le salon d’entraide associé' }))
-  expect(screen.getByRole('heading', { name: '# self-hosting' })).toBeInTheDocument()
+  const link = screen.getByRole('link', { name: 'Ouvrir la documentation développeur' })
+  expect(link).toHaveAttribute('href', 'https://kodera.io/docs')
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(screen.queryByTestId('developer-docs-hub')).toBeNull()
 })
 it('closes only the nested community dialog on Escape inside a confirmed onboarding summary', async () => {
   post.mockResolvedValue({

@@ -1,3 +1,4 @@
+import type { DriveDocumentRequest } from '../docs/DriveWorkspaceContext'
 import { SimpleMessagingSidebar } from './SimpleMessagingSidebar'
 import { KoderaIcon } from '../../ui/icons/KoderaIcons'
 import { uiModeCopy } from './uiModePreference'
@@ -169,6 +170,9 @@ export interface EspaceLiveViewProps {
   readonly defaultMembersOpen?: boolean | undefined
   readonly focusedDocs?: boolean | undefined
   readonly activeCanvasMode?: CanvasMode | undefined
+  readonly canvasRequestKey?: number | undefined
+  readonly onUpdateChannelDocument?:
+    ((channelId: string, id: string, patch: { title: string; content: string }) => void) | undefined
   readonly onChangeCanvasMode?: ((mode: CanvasMode) => void) | undefined
   readonly documents?: readonly ChannelDoc[]
   readonly collections?: readonly OmniboxCollectionDescriptor[] | undefined
@@ -284,7 +288,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   membershipActive,
   defaultMembersOpen = false,
   focusedDocs = false,
-  activeCanvasMode = 'chat',
+  activeCanvasMode = new URLSearchParams(window.location.search).has('document') ? 'docs' : 'chat',
+  canvasRequestKey,
+  onUpdateChannelDocument,
   onChangeCanvasMode,
   docsCanvasSlot,
   onActiveChannelBoundaryChange,
@@ -390,13 +396,27 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const navigationUnsettled =
     navigationPending || (requestedChannelId !== null && requestedChannelId !== addressedChannel)
 
-  const uiMode = useWorkspaceUiMode(workspace.default_ui_mode)
+  const preferredUiMode = useWorkspaceUiMode(workspace.default_ui_mode)
+  const [sharedDocumentVisit, setSharedDocumentVisit] = useState(() =>
+    new URLSearchParams(window.location.search).has('document')
+  )
+  const uiMode = sharedDocumentVisit ? 'pro' : preferredUiMode
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
+  const [localCanvasMode, setLocalCanvasMode] = useState<CanvasMode>(activeCanvasMode)
+  const [requestedDriveDocument, setRequestedDriveDocument] = useState<
+    DriveDocumentRequest | undefined
+  >()
+  const handleDriveDocumentRequest = useStableHandler((sequence: number) => {
+    setRequestedDriveDocument((request) => (request?.sequence === sequence ? undefined : request))
+  })
+  const [localNavigationRequestKey, setLocalNavigationRequestKey] = useState(0)
+  const requestSequence = useRef(0)
   const [observedCanvasMode, setObservedCanvasMode] = useState(activeCanvasMode)
   if (observedCanvasMode !== activeCanvasMode) {
     setObservedCanvasMode(activeCanvasMode)
+    setLocalCanvasMode(activeCanvasMode)
     setLocalCallsOpen(false)
     if (activeCanvasMode !== 'chat') {
       setViewingCallStage(false)
@@ -407,10 +427,17 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [observedUiMode, setObservedUiMode] = useState(uiMode)
   if (observedUiMode !== uiMode) {
     setObservedUiMode(uiMode)
-    if (uiMode === 'messages' && localCallsOpen) setLocalCallsOpen(false)
+    if (uiMode === 'messages') {
+      setLocalCanvasMode('chat')
+      if (localCallsOpen) setLocalCallsOpen(false)
+    }
   }
   const rawCanvasMode: CanvasMode =
-    onChangeCanvasMode === undefined && localCallsOpen ? 'calls' : activeCanvasMode
+    onChangeCanvasMode === undefined
+      ? localCallsOpen
+        ? 'calls'
+        : localCanvasMode
+      : activeCanvasMode
   const effectiveCanvasMode: CanvasMode = uiMode === 'messages' ? 'chat' : rawCanvasMode
   useEffect(() => {
     if (uiMode !== 'messages' || activeCanvasMode === 'chat') return
@@ -469,6 +496,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setViewingCallStage(false)
       setFullStage(false)
       setLocalCallsOpen(false)
+      setLocalCanvasMode('chat')
       onChangeCanvasMode?.('chat')
       setDirect({ roomId, over: selectedChannelId })
     }
@@ -774,6 +802,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setViewingCallStage(false)
       setFullStage(false)
       setLocalCallsOpen(false)
+      setLocalCanvasMode('chat')
       onChangeCanvasMode?.('chat')
       if (onNavigateChannel === undefined) {
         setClickedChannelId(nextChannelId)
@@ -837,6 +866,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setMessagesDetailOpen(true)
       closeChannelChooser()
       setLocalCallsOpen(false)
+      setLocalCanvasMode('chat')
       onChangeCanvasMode?.('chat')
       if (activeCall === null || room === undefined) return
       const boundary = activeStore.getRoomBoundary?.(room.roomId)
@@ -864,6 +894,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setCallDetached(false)
     setViewingCallStage(true)
     setLocalCallsOpen(false)
+    setLocalCanvasMode('chat')
     onChangeCanvasMode?.('chat')
   })
   const detachCall = useStableHandler(() => {
@@ -996,20 +1027,24 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
 
   const handleSelectUiMode = useStableHandler(
     (next: WorkspaceUiMode, options?: { fromToggle?: boolean }) => {
+      setSharedDocumentVisit(false)
       pendingModeFocus.current = { mode: next, force: options?.fromToggle === true }
       setUiMode(next)
       if (next === 'messages') {
         setLocalCallsOpen(false)
+        setLocalCanvasMode('chat')
         onChangeCanvasMode?.('chat')
       }
     }
   )
   const handleToggleUiMode = useStableHandler(() => {
     const next = uiMode === 'messages' ? 'pro' : 'messages'
+    setSharedDocumentVisit(false)
     setUiMode(next)
     pendingModeFocus.current = { mode: next, force: false }
     if (next === 'messages') {
       setLocalCallsOpen(false)
+      setLocalCanvasMode('chat')
       onChangeCanvasMode?.('chat')
     }
   })
@@ -1041,6 +1076,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : null
   })
   const changeCanvas = useStableHandler((mode: CanvasMode) => {
+    if (mode === 'files' || mode === 'docs') setLocalNavigationRequestKey((key) => key + 1)
     pendingMessageJump.current = null
     if (mode !== 'chat' && uiMode === 'messages') setUiMode('pro')
     if (mode !== 'chat') {
@@ -1049,6 +1085,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setFullStage(false)
     }
     setLocalCallsOpen(mode === 'calls')
+    setLocalCanvasMode(mode)
     onChangeCanvasMode?.(mode)
   })
   const openDocument = useStableHandler((doc: ChannelDoc) => {
@@ -1058,12 +1095,30 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     setViewingCallStage(false)
     setFullStage(false)
     setLocalCallsOpen(false)
-    onOpenDocument?.(doc)
-    requestAnimationFrame(() => headingRef.current?.focus())
+    const sourceChannelId = doc.id.startsWith('workspace-page:') ? activeChannel?.id : doc.channelId
+    const source = sourceChannelId ? snapshot.channels.get(sourceChannelId) : undefined
+    setRequestedDriveDocument(
+      source?.state === 'resolved'
+        ? {
+            id: doc.id,
+            channelId: sourceChannelId ?? doc.channelId,
+            roomId: source.roomId,
+            sequence: ++requestSequence.current,
+          }
+        : undefined
+    )
+    setLocalCanvasMode('docs')
+    if (onOpenDocument) onOpenDocument(doc)
+    else onChangeCanvasMode?.('docs')
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>('[data-testid="workspace-collaborative-docs"] h1')
+        ?.focus()
+    )
     leaveChannelChooser()
     return headingRef.current
   })
-  const openStudioDocument = onOpenDocument ? openDocument : undefined
+  const openStudioDocument = openDocument
   const openCollectionFromOmnibox = useStableHandler((id: string): HTMLElement | null => {
     pendingMessageJump.current = null
     if (onOpenCollection !== undefined) {
@@ -1085,12 +1140,19 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   const openStudioChannel = useStableHandler((entry: ChannelSearchEntry) => {
     setLocalCallsOpen(false)
-    if (entry.kind === 'text') onChangeCanvasMode?.('chat')
+    if (entry.kind === 'text') {
+      setLocalCanvasMode('chat')
+      onChangeCanvasMode?.('chat')
+    }
     return openFromSearch(entry)
   })
-  const [docsEverOpened, setDocsEverOpened] = useState(effectiveCanvasMode === 'docs')
-  if (effectiveCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
+  const [docsEverOpened, setDocsEverOpened] = useState(
+    effectiveCanvasMode === 'docs' || effectiveCanvasMode === 'files'
+  )
+  if ((effectiveCanvasMode === 'docs' || effectiveCanvasMode === 'files') && !docsEverOpened)
+    setDocsEverOpened(true)
   const switchCanvas = useStableHandler((mode: CanvasMode) => {
+    if (mode === 'files' || mode === 'docs') setLocalNavigationRequestKey((key) => key + 1)
     pendingMessageJump.current = null
     if (mode !== 'chat') {
       setDirect(null)
@@ -1098,6 +1160,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setFullStage(false)
     }
     setLocalCallsOpen(mode === 'calls')
+    setLocalCanvasMode(mode)
     onChangeCanvasMode?.(mode)
     leaveChannelChooser()
   })
@@ -1124,17 +1187,32 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         : undefined
   const activeChannelIdForDocs = activeChannel?.id
   useLayoutEffect(() => {
+    if (directRoomId !== null) return
     onActiveChannelBoundaryChange?.({
       channelId: activeChannelIdForDocs,
       roomBoundary: activeDocsBoundary,
       isConfidential: activeDocsIsConfidential,
     })
   }, [
+    directRoomId,
     activeChannelIdForDocs,
     activeDocsBoundary,
     activeDocsIsConfidential,
     onActiveChannelBoundaryChange,
   ])
+
+  if (requestedDriveDocument) {
+    const source = snapshot.channels.get(requestedDriveDocument.channelId)
+    if (
+      activeChannel?.id !== requestedDriveDocument.channelId ||
+      source?.state !== 'resolved' ||
+      source.roomId !== requestedDriveDocument.roomId ||
+      activeDocsIsConfidential ||
+      (activeDocsBoundary !== undefined && !permitsPlaintext(activeDocsBoundary))
+    ) {
+      setRequestedDriveDocument(undefined)
+    }
+  }
 
   const activeChannelName =
     activeChannel !== null && activeChannel !== undefined ? channelLabel(activeChannel, t) : ''
@@ -1841,6 +1919,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             <EspaceCanvasPanes
               signedOut={signedOut}
               onReconnect={onReconnect}
+              roomBoundary={activeDocsBoundary}
+              isConfidential={activeDocsIsConfidential}
+              requestedDocument={requestedDriveDocument}
+              navigationRequestKey={(canvasRequestKey ?? 0) + localNavigationRequestKey}
+              onDocumentRequestHandled={handleDriveDocumentRequest}
+              onUpdateChannelDocument={onUpdateChannelDocument}
               docsEverOpened={docsEverOpened}
               activeChannel={activeChannel}
               directRoomId={directRoomId}

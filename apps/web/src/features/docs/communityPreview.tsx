@@ -1,12 +1,13 @@
 import { COMMUNITY_CATEGORIES, COMMUNITY_CHANNELS } from './communityStructure'
 export { COMMUNITY_CATEGORIES, COMMUNITY_CHANNELS } from './communityStructure'
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/ui/Dialog/Dialog'
 import { Button } from '@/ui/Button/Button'
 import { LinkButton } from '@/ui/LinkButton/LinkButton'
 import { developerDocsCopy } from './developerDocsMessages'
 import type { CommunityChannelId } from './documentationExport'
+export const DEVELOPER_DOCS_URL = 'https://kodera.io/docs'
 export const COMMUNITY_TARGET_URL = 'https://community.kodera.io/'
 export function useCommunityPreview() {
   const [channel, setChannel] = useState<CommunityChannelId | null>(null)
@@ -30,13 +31,9 @@ export type CommunityPreviewController = ReturnType<typeof useCommunityPreview>
 export function CommunityPreviewDialog({
   controller,
   onOpenDocs,
-  docsSlot,
-  onShowChannels,
 }: {
   controller: CommunityPreviewController
-  onOpenDocs: () => void
-  docsSlot?: ReactNode
-  onShowChannels?: (() => void) | undefined
+  onOpenDocs?: (() => void) | undefined
 }) {
   const focusTarget = useRef<HTMLElement | null>(null)
   const { i18n } = useTranslation()
@@ -61,21 +58,16 @@ export function CommunityPreviewDialog({
       <div className="flex max-h-[calc(100vh/2)] min-w-0 flex-col gap-4 overflow-y-auto p-1 lg:max-h-[calc(100vh*2/3)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="font-mono text-xs text-c-ink-2">{copy.domain}</span>
-          <Button
-            onClick={() => {
-              if (docsSlot && onShowChannels) onShowChannels()
-              else {
-                focusTarget.current = controller.returnTarget()
-                onOpenDocs()
-              }
-            }}
+          <LinkButton
+            href={DEVELOPER_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onOpenDocs}
           >
-            <span className="whitespace-normal">
-              {docsSlot && onShowChannels ? copy.communityChannels : copy.openDocs}
-            </span>
-          </Button>
+            {copy.openDocs}
+          </LinkButton>
         </div>
-        {docsSlot ?? (
+        {
           <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
             <nav aria-label={copy.communityChannels} className="flex min-w-0 flex-col gap-2">
               {COMMUNITY_CATEGORIES.map((category) => (
@@ -112,7 +104,7 @@ export function CommunityPreviewDialog({
               <p className="text-sm text-c-ink-2">{copy.noMessages}</p>
             </section>
           </div>
-        )}
+        }
         <LinkButton inline href={COMMUNITY_TARGET_URL} target="_blank">
           {copy.openSite}
         </LinkButton>

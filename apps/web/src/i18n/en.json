@@ -130,6 +130,7 @@
   "console.docs.collab.wikilink-menu-label": "Link a workspace page",
   "console.docs.collab.wikilink-open": "Open page {{title}}",
   "console.docs.collection.action-reload": "Reload collection",
+  "console.docs.collection.error-storage-limit": "Base limit reached: 500 rows or 262,144 bytes. Reduce its content before trying again.",
   "console.docs.collection.error-version-conflict": "Another member changed this entry while you were editing it. Reload the collection to get its current version, then re-apply your change.",
   "console.docs.collection.error-version-required": "Your change was sent without the entry’s version, so it was not saved. Reload the collection, then re-apply your change — it will be sent with the current version.",
   "console.docs.panel.action-copy-link": "Copy the link",

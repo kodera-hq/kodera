@@ -63,6 +63,7 @@
   "console.docs.collab.wikilink-menu-label": "Lier une page de l’espace",
   "console.docs.collab.wikilink-open": "Ouvrir la page {{title}}",
   "console.docs.collection.action-reload": "Recharger la collection",
+  "console.docs.collection.error-storage-limit": "Limite de la base atteinte : 500 lignes ou 262 144 octets. Réduisez son contenu avant de réessayer.",
   "console.docs.collection.error-version-conflict": "Un autre membre a modifié cette entrée pendant votre saisie. Rechargez la collection pour récupérer sa version actuelle, puis réappliquez votre changement.",
   "console.docs.collection.error-version-required": "Votre modification est partie sans la version de l’entrée : elle n’a pas été enregistrée. Rechargez la collection, puis réappliquez votre changement — il sera envoyé avec la version à jour.",
   "console.docs.panel.action-copy-link": "Copier le lien",

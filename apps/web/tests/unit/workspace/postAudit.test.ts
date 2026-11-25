@@ -24,6 +24,7 @@ const room = (roomId: string): RoomSummary => ({
   roomId,
   name: roomId,
   alias: null,
+  confidentiality: 'ordinary',
   kind: 'text',
   unread: 0,
   mentions: 0,
@@ -184,6 +185,33 @@ it('includes direct attachments once, strips spoofing controls, and omits redact
     sizeBytes: 42,
   })
 })
+
+it.each(['unknown', 'invalid', 'confidential-unavailable', undefined] as const)(
+  'omits direct attachments without reading the timeline when the boundary is %s',
+  (boundary) => {
+    const { store, snapshot, timelines } = fixture()
+    timelines.get('!dm:example.org')!.push(
+      message('$file', {
+        attachments: [
+          { id: 'attachment', filename: 'Private.png', contentType: 'image/png', sizeBytes: 42 },
+        ],
+      }),
+      message('$native-file', { attachment: { name: 'Private.txt' } })
+    )
+    const getTimeline = vi.spyOn(store, 'getTimeline')
+    const protectedSnapshot: EspaceSnapshot = {
+      ...snapshot,
+      rooms: snapshot.rooms.flatMap((entry) => {
+        if (entry.roomId !== '!dm:example.org') return [entry]
+        const { confidentiality: _confidentiality, ...unclassified } = entry
+        return [boundary === undefined ? unclassified : { ...entry, confidentiality: boundary }]
+      }),
+    }
+
+    expect(workspaceFilesOf(store, protectedSnapshot, [], [])).toEqual([])
+    expect(getTimeline).not.toHaveBeenCalled()
+  }
+)
 
 it('makes no recording-notice guarantee while lifecycle cues remain unwired and Silent suppresses them', () => {
   for (const copy of [SOUNDS_COPY_FR, SOUNDS_COPY_EN]) {

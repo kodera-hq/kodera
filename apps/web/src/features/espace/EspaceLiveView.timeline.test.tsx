@@ -88,6 +88,7 @@ function makeStore(timeline: MessageView[], readMarker: string | null, unread = 
     for (const listener of listeners) listener()
   }
   const store = {
+    getRoomBoundary: () => 'ordinary' as const,
     subscribe: (listener: () => void) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -282,40 +283,51 @@ describe('« Nouveaux messages »', () => {
   })
 })
 
-it('routes document cards and workspace files by ID, excluding unrelated and deleted files', async () => {
-  const user = userEvent.setup()
-  const doc = { id: 'guide', channelId: GENERAL, title: 'Guide review', content: 'Review' }
-  const onOpenDocument = vi.fn()
-  const { store } = makeStore(
-    [
-      message('published', '2026-11-10T10:00:00Z', { document: { id: doc.id, title: doc.title } }),
-      message('file', '2026-11-10T10:01:00Z', { attachment: { name: 'diagram.svg' } }),
-      message('deleted', '2026-11-10T10:02:00Z', {
-        redacted: true,
-        attachment: { name: 'removed.pdf' },
-      }),
-    ],
-    null
-  )
-  render(
-    <EspaceLiveView
-      org="acme"
-      organisationName="Acme"
-      workspace={WORKSPACE}
-      channelId={GENERAL}
-      store={store}
-      onOpenDocument={onOpenDocument}
-      documents={[doc, { ...doc, id: 'other', channelId: 'outside', title: 'Outside workspace' }]}
-    />
-  )
-  await user.click(screen.getByRole('button', { name: /Guide review.*Ouvrir dans Docs/ }))
-  expect(onOpenDocument).toHaveBeenCalledWith(doc)
-  await user.click(screen.getByRole('button', { name: 'Fichiers' }))
-  const files = screen.getByRole('dialog', { name: 'Fichiers' })
-  expect(within(files).getByRole('button', { name: /diagram.svg/ })).toBeInTheDocument()
-  expect(within(files).queryByText('removed.pdf')).toBeNull()
-  expect(within(files).queryByText('Outside workspace')).toBeNull()
-  await user.click(within(files).getByRole('button', { name: /Guide review/ }))
-  expect(onOpenDocument).toHaveBeenCalledTimes(2)
-  expect(screen.queryByRole('dialog', { name: 'Fichiers' })).toBeNull()
-})
+it.each([false, true])(
+  'routes channel and workspace document cards and filters attachments (workspacePage=%s)',
+  async (workspacePage) => {
+    const user = userEvent.setup()
+    const doc = {
+      id: workspacePage ? 'workspace-page:guide' : 'guide',
+      channelId: workspacePage ? '' : GENERAL,
+      title: 'Guide review',
+      content: 'Review',
+    }
+    const onOpenDocument = vi.fn()
+    const { store } = makeStore(
+      [
+        message('published', '2026-11-10T10:00:00Z', {
+          document: { id: doc.id, title: doc.title },
+        }),
+        message('file', '2026-11-10T10:01:00Z', { attachment: { name: 'diagram.svg' } }),
+        message('deleted', '2026-11-10T10:02:00Z', {
+          redacted: true,
+          attachment: { name: 'removed.pdf' },
+        }),
+      ],
+      null
+    )
+    render(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme"
+        workspace={WORKSPACE}
+        channelId={GENERAL}
+        store={store}
+        onOpenDocument={onOpenDocument}
+        documents={[doc, { ...doc, id: 'other', channelId: 'outside', title: 'Outside workspace' }]}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: /Guide review.*Ouvrir dans Docs/ }))
+    expect(onOpenDocument).toHaveBeenCalledWith(doc)
+    await user.click(await screen.findByTestId('docs-breadcrumb-drive-root'))
+    await user.click(screen.getByTestId('drive-open-folder-virtual:channel-attachments'))
+    const files = screen.getByTestId('docs-drive-explorer')
+    expect(within(files).getByRole('button', { name: 'diagram.svg' })).toBeInTheDocument()
+    expect(within(files).queryByText('removed.pdf')).toBeNull()
+    expect(within(files).queryByText('Outside workspace')).toBeNull()
+    await user.click(within(files).getByRole('button', { name: /Ouvrir le document Guide review/ }))
+    expect(screen.getByTestId('docs-page-title-input')).toHaveValue('Guide review')
+    expect(screen.queryByRole('dialog', { name: 'Fichiers' })).toBeNull()
+  }
+)

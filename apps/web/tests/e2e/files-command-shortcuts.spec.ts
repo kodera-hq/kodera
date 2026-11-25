@@ -9,15 +9,30 @@ test('Files and Integrations stay in the canvas while global shortcuts own one a
   page,
 }) => {
   await page.goto('/community/workspace')
-  await page.getByRole('button', { name: 'Fichiers', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Fichiers', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Drive & Docs', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Drive & Docs', exact: true })).toBeVisible()
   await expect(
-    page.getByRole('textbox', { name: 'Rechercher un fichier', exact: true })
+    page.getByRole('searchbox', { name: 'Rechercher dans Drive', exact: true })
   ).toBeVisible()
   await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeHidden()
   await expect(
     page.getByRole('group', { name: 'Filtrer par type' }).getByRole('button')
-  ).toHaveCount(4)
+  ).toHaveCount(6)
+  const invokeFiles = async () => {
+    await page.keyboard.press('ControlOrMeta+k')
+    const commands = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
+    await commands.getByRole('combobox').fill('Fichiers')
+    await expect(
+      commands.getByRole('option', { name: 'Fichiers Actions', exact: true })
+    ).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('docs-drive-explorer')).toBeVisible()
+  }
+  await invokeFiles()
+  await page.getByTestId('drive-new-doc-btn').click()
+  await expect(page.getByTestId('docs-page-title-input')).toBeVisible()
+  await invokeFiles()
+  await expect(page.getByTestId('docs-page-title-input')).toBeHidden()
   await page.keyboard.press('ControlOrMeta+k')
   const palette = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(palette).toBeVisible()

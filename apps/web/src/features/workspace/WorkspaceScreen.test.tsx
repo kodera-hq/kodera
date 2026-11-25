@@ -8,6 +8,9 @@ import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-
 import { act, configure, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
+import type { ChannelDoc } from '../docs/ChannelDocsEditor'
+import type * as DocsModule from '../docs/WorkspaceCollaborativeDocs'
+import type { WorkspaceCollaborativeDocsProps } from '../docs/WorkspaceCollaborativeDocs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { ApiProblem, NetworkError } from '../../api/client'
@@ -19,11 +22,12 @@ import type * as RouterModule from '@tanstack/react-router'
 import { notInitialisedWorkspace, readyWorkspace } from '../../mocks/fixtures/workspaceFixtures'
 import type { Workspace } from './workspace'
 import { WorkspaceScreen } from './WorkspaceScreen'
-import { registerInteractiveDemo } from '../../app/interactiveDemo'
+import { registerDemoViewStorage, registerInteractiveDemo } from '../../app/interactiveDemo'
 import { createLocalWorkspaceStore } from '../../mocks/demo/workspaceStore'
 import type { EspaceStoreLike } from '../espace/EspaceLiveView'
 
-const { get, request, session, beginMatrixSignIn, navigate } = vi.hoisted(() => ({
+const { get, request, session, beginMatrixSignIn, navigate, documentOpened } = vi.hoisted(() => ({
+  documentOpened: vi.fn(),
   get: vi.fn(),
   request: vi.fn(),
   beginMatrixSignIn: vi.fn(),
@@ -44,6 +48,14 @@ const { get, request, session, beginMatrixSignIn, navigate } = vi.hoisted(() => 
   },
 }))
 
+vi.mock('../docs/WorkspaceCollaborativeDocs', async (importOriginal) => {
+  const actual = await importOriginal<typeof DocsModule>()
+  const TrackedDocs = (props: WorkspaceCollaborativeDocsProps) => {
+    documentOpened(props.activeDocumentId)
+    return <actual.WorkspaceCollaborativeDocs {...props} />
+  }
+  return { ...actual, default: TrackedDocs }
+})
 vi.mock('../../api/client', async () => ({
   ...(await vi.importActual<typeof CoreClientModule>('../../api/client')),
   coreApi: () => ({ GET: get, request }),
@@ -66,7 +78,13 @@ vi.mock('../espace/EspaceLiveView', () => ({
     onChangeCanvasMode,
     docsCanvasSlot,
     organisationActionSlot,
+    onOpenCollection,
+    onOpenDocument,
+    documents,
   }: {
+    onOpenCollection?: (id: string) => void
+    onOpenDocument?: (doc: ChannelDoc) => void
+    documents?: readonly ChannelDoc[]
     channelId?: string
     activeCanvasMode?: string
     onChangeCanvasMode?: (mode: 'chat' | 'docs') => void
@@ -82,6 +100,10 @@ vi.mock('../espace/EspaceLiveView', () => ({
       <button onClick={() => onNavigateChannel?.(channelId!)}>Current channel</button>
       <button onClick={() => onChangeCanvasMode?.('chat')}>Discussion canvas</button>
       {organisationActionSlot}
+      <button onClick={() => onOpenCollection?.(documents?.[0]?.id ?? '')}>Palette document</button>
+      <button onClick={() => documents?.[0] && onOpenDocument?.(documents[0])}>
+        Chat document
+      </button>
       {activeCanvasMode === 'docs' ? docsCanvasSlot : null}
       <p data-testid="espace-live">{live?.userId ?? store?.getUserId()}</p>
       <button type="button" onClick={() => onNavigateChannel?.('channel-2')}>
@@ -312,7 +334,12 @@ describe('the workspace, once it exists', () => {
     // The dark workspace reference's current channel (docs/specs/workspace-dark-roles.md): the
     // accent row and its 3 px accent bar, with no edge.
     const current = screen.getByRole('link', { name: 'général' })
-    expect(current).toHaveClass('bg-c-accent-soft', 'text-c-accent-ink', 'border-transparent', 'before:bg-c-accent-ink')
+    expect(current).toHaveClass(
+      'bg-c-accent-soft',
+      'text-c-accent-ink',
+      'border-transparent',
+      'before:bg-c-accent-ink'
+    )
     expect(current).not.toHaveClass('border-c-accent-ink')
     expect(within(current).getByText('#')).toHaveClass('text-c-accent-ink')
     // One class at a time: `not.toHaveClass(a, b)` passes when either one is missing.
@@ -1537,7 +1564,7 @@ describe('a workspace whose tenant is being prepared (quick-workspace W2)', () =
   })
 })
 
-it('wires the live Discussion and Docs canvas and preserves each channel draft', async () => {
+it('wires the live discussion to one unified Drive explorer and restores chat on channel selection', async () => {
   vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.test')
   session.tenant = { slug: 'acme-team', status: 'active' }
   registerMatrixSession({
@@ -1554,43 +1581,13 @@ it('wires the live Discussion and Docs canvas and preserves each channel draft',
   const user = userEvent.setup()
   renderScreen()
   await user.click(await screen.findByRole('button', { name: 'Docs canvas' }))
+  expect(await screen.findByTestId('docs-drive-explorer')).toBeInTheDocument()
+  expect(screen.getAllByRole('heading', { name: 'Drive & Docs' })).toHaveLength(1)
+  expect(screen.queryByRole('button', { name: 'Pads de l’équipe' })).toBeNull()
   await user.click(screen.getByRole('button', { name: 'Current channel' }))
-  expect(screen.queryByRole('button', { name: 'Pages de l’espace' })).not.toBeInTheDocument()
+  expect(screen.queryByTestId('docs-drive-explorer')).toBeNull()
   await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
-  // In the live workspace « Docs » opens on the collaborative Pages: the channel pads view is
-  // the one a store supplies, and without one it is a draft held in this browser alone.
-  expect(screen.getByRole('button', { name: 'Pages de l’espace' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
-  )
-  await user.click(screen.getByRole('button', { name: 'Pads de l’équipe' }))
-  const editor = screen
-    .getAllByTestId('docs-inline-textarea')
-    .find((node) => !node.closest('[hidden]'))!
-  await user.clear(editor)
-  await user.type(editor, 'Production draft')
-  await user.click(screen.getByRole('button', { name: 'Discussion canvas' }))
-  await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
-  await user.click(screen.getByRole('button', { name: 'Pads de l’équipe' }))
-  const returned = screen
-    .getAllByTestId('docs-inline-textarea')
-    .find((node) => !node.closest('[hidden]'))!
-  expect(returned).toHaveValue('Production draft')
-  await user.click(
-    screen.getByRole('button', { name: 'Documentation développeur & API (Docs-as-Code)' })
-  )
-  expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
-  const openCommunity = vi.spyOn(window, 'open').mockImplementation(() => null)
-  await user.click(screen.getByRole('button', { name: 'Ouvrir le salon d’entraide associé' }))
-  expect(openCommunity).toHaveBeenCalledWith(
-    'https://community.kodera.io/community/workspace',
-    '_blank',
-    'noopener,noreferrer'
-  )
-  openCommunity.mockRestore()
-  await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
-  await user.click(screen.getByRole('button', { name: 'Pads de l’équipe' }))
-  expect(screen.getByTestId('docs-inline-textarea')).toHaveValue('Production draft')
+  expect(await screen.findByTestId('docs-drive-explorer')).toBeInTheDocument()
 })
 
 it('offers Cloud onboarding to an owner before the first workspace is created', async () => {
@@ -1624,9 +1621,8 @@ it('opens the registered local demo with Docs and community access without a Mat
   expect(screen.queryByRole('button', { name: 'Ouvrir les messages' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Configurer un espace' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
-  expect(screen.getByRole('button', { name: 'Nouveau document' })).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: /Documentation développeur & API/ }))
-  expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
+  expect(await screen.findByTestId('docs-drive-explorer')).toBeInTheDocument()
+  expect(screen.queryByTestId('developer-docs-hub')).toBeNull()
 })
 
 it('puts community onboarding, connectors, Docs and persisted themes in the routed workspace', async () => {
@@ -1644,8 +1640,8 @@ it('puts community onboarding, connectors, Docs and persisted themes in the rout
   expect(screen.getByRole('dialog')).toHaveTextContent('Nom de l’espace')
   await user.keyboard('{Escape}')
   await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
-  await user.click(screen.getByRole('button', { name: /Documentation développeur & API/ }))
-  expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
+  expect(await screen.findByTestId('docs-drive-explorer')).toBeInTheDocument()
+  expect(screen.queryByTestId('developer-docs-hub')).toBeNull()
   localStorage.removeItem(THEME_STORAGE_KEY)
 })
 
@@ -1665,24 +1661,100 @@ it.each([
     serve(makeWorkspace())
     renderScreen()
     await heading()
-    for (const command of ['configure', 'extensions', 'hosting', 'studio', 'developer'] as const) {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    act(() => openWorkspaceCommand('developer'))
+    expect(open).toHaveBeenCalledWith('https://kodera.io/docs', '_blank', 'noopener,noreferrer')
+    for (const command of ['configure', 'extensions', 'hosting', 'studio'] as const) {
       act(() => openWorkspaceCommand(command))
       expect(screen.getByRole('dialog')).toBeInTheDocument()
-      if (command === 'developer')
-        expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
       await user.keyboard('{Escape}')
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     }
   }
 )
 
-it('keeps the developer menu command inside the live workspace canvas', async () => {
+it('opens the canonical developer portal from the live workspace menu', async () => {
   session.slug = 'community'
   registerInteractiveDemo(communityDemo)
   serve(communityWorkspace())
   renderScreen()
   await screen.findByTestId('espace-live')
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
   act(() => openWorkspaceCommand('developer'))
-  expect(screen.getByTestId('developer-docs-hub')).toBeInTheDocument()
+  expect(open).toHaveBeenCalledWith('https://kodera.io/docs', '_blank', 'noopener,noreferrer')
+  expect(screen.queryByTestId('developer-docs-hub')).toBeNull()
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
+
+it('opens a shared document in Drive & Docs on a fresh workspace mount', async () => {
+  const location = window.location.href
+  window.history.replaceState({}, '', '?document=shared-page')
+  try {
+    session.slug = 'vercelli'
+    registerInteractiveDemo({ slug: 'vercelli', createStore: createLocalWorkspaceStore })
+    const workspace = readyWorkspace()
+    registerDemoViewStorage({
+      read: () => ({
+        channels: {},
+        docs: { docs: [], selectedByChannel: {} },
+        pages: [
+          {
+            id: 'shared-page',
+            parentId: null,
+            title: 'Shared introduction',
+            markdown: '# Shared introduction',
+            role: 'editor',
+            updatedAt: '',
+          },
+        ],
+      }),
+      write: () => undefined,
+    })
+    serve(workspace)
+    renderScreen()
+    expect(await screen.findByRole('heading', { name: 'Drive & Docs' })).toBeInTheDocument()
+    expect(screen.queryByTestId('docs-drive-explorer')).toBeNull()
+    expect(await screen.findByTestId('docs-page-title-input')).toHaveValue('Shared introduction')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Discussion canvas' }))
+    expect(screen.queryByTestId('docs-page-title-input')).toBeNull()
+  } finally {
+    registerDemoViewStorage({ read: () => undefined, write: () => undefined })
+    window.history.replaceState({}, '', location)
+  }
+})
+
+it.each(['Palette document', 'Chat document'])(
+  'passes the exact channel document to Drive from %s',
+  async (action) => {
+    const user = userEvent.setup()
+    session.slug = 'vercelli'
+    registerInteractiveDemo({ slug: 'vercelli', createStore: createLocalWorkspaceStore })
+    registerDemoViewStorage({
+      read: () => ({
+        channels: {},
+        pages: [],
+        docs: {
+          docs: [
+            {
+              id: 'channel-guide',
+              channelId: 'channel-1',
+              title: 'Channel guide',
+              content: '# Guide',
+            },
+          ],
+          selectedByChannel: {},
+        },
+      }),
+      write: () => undefined,
+    })
+    try {
+      serve(readyWorkspace())
+      renderScreen()
+      await screen.findByTestId('espace-live')
+      await user.click(screen.getByRole('button', { name: action }))
+      await waitFor(() => expect(documentOpened).toHaveBeenCalledWith('channel:channel-guide'))
+    } finally {
+      registerDemoViewStorage({ read: () => undefined, write: () => undefined })
+    }
+  }
+)

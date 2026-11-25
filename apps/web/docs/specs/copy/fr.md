@@ -2327,3 +2327,5 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.directs.invite-failed` | Impossible de mettre à jour cette invitation. Réessayez. |
 | `console.workspace.directs.invites` | Invitations en attente ({count}) |
 | `console.shell.session.matrix-rate-limited` | Trop de tentatives de connexion à l’espace. Les relances automatiques sont arrêtées. Patientez avant de rouvrir votre espace. |
+
+| `console.docs.collection.error-storage-limit` | Limite de la base atteinte : 500 lignes ou 262 144 octets. Réduisez son contenu avant de réessayer. |

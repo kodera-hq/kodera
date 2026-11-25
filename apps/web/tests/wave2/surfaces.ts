@@ -827,7 +827,7 @@ export const SURFACES: readonly Surface[] = [
     gate: 'BASE + MATRIX; storage admission, media quota, attachment authorization',
     visual: 'stable',
     source:
-      'S10/S11 host → src/features/espace/WorkspaceFilesPanel.tsx, FilesUpload.tsx; src/features/messaging/attachments/MessageAttachments.tsx',
+      'S10/S11 host → src/features/docs/WorkspaceCollaborativeDocs.tsx; src/features/espace/FilesUpload.tsx; src/features/messaging/attachments/MessageAttachments.tsx',
     oracles: [
       {
         origin: 'api',

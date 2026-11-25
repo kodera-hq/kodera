@@ -161,13 +161,11 @@ describe('DirectMessageDialog and canvas mode switching', () => {
     expect(screen.getByRole('heading', { level: 1, name: /Marina Loiseau/ })).toBeVisible()
 
     // Switch from active DM to Docs -> DM is cleared and Docs canvas renders (never blank!)
-    await user.click(screen.getByRole('button', { name: 'Docs' }))
+    await user.click(screen.getByRole('button', { name: 'Drive & Docs' }))
     expect(screen.getByTestId('rendered-docs-slot')).toBeVisible()
     expect(screen.getByRole('link', { name: 'général' })).not.toHaveAttribute('aria-current')
 
-    // Switch to Fichiers -> channel row is not aria-current and chat-only actions are absent
-    await user.click(screen.getByRole('button', { name: 'Fichiers' }))
-    expect(await screen.findByRole('region', { name: 'Fichiers de l’espace' })).toBeVisible()
+    // The unified tool keeps channel-only actions out of the documents canvas.
     expect(screen.getByRole('link', { name: 'général' })).not.toHaveAttribute('aria-current')
     expect(screen.queryByRole('button', { name: 'Inviter' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Messages épinglés/ })).toBeNull()

@@ -1,8 +1,6 @@
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/ui/Button/Button'
 import { developerDocsCopy } from './developerDocsMessages'
-import { DeveloperDocsHub } from './DeveloperDocsHub'
 import {
   CommunityPreviewDialog,
   useCommunityPreview,
@@ -17,7 +15,6 @@ export function CommunityAccess({
 }) {
   const internal = useCommunityPreview()
   const state = controller ?? internal
-  const [docsOpen, setDocsOpen] = useState(false)
   const { i18n } = useTranslation()
   const copy = developerDocsCopy(i18n.resolvedLanguage)
   return (
@@ -28,7 +25,6 @@ export function CommunityAccess({
         size="sm"
         variant="secondary"
         onClick={() => {
-          setDocsOpen(false)
           state.open()
         }}
         aria-label={`${copy.community} · ${copy.domain}`}
@@ -38,26 +34,7 @@ export function CommunityAccess({
           <span className="max-w-full truncate font-mono text-xs">{copy.domain}</span>
         </span>
       </Button>
-      <CommunityPreviewDialog
-        controller={state}
-        onShowChannels={() => setDocsOpen(false)}
-        onOpenDocs={() => {
-          if (onOpenDocs) {
-            state.close()
-            onOpenDocs()
-          } else setDocsOpen(true)
-        }}
-        docsSlot={
-          docsOpen ? (
-            <DeveloperDocsHub
-              onOpenSupportChannel={(channel) => {
-                setDocsOpen(false)
-                state.open(channel)
-              }}
-            />
-          ) : undefined
-        }
-      />
+      <CommunityPreviewDialog controller={state} onOpenDocs={onOpenDocs} />
     </>
   )
 }

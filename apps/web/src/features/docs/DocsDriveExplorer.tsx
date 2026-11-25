@@ -1,4 +1,6 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { KoderaIcon } from '@/ui/icons/KoderaIcons'
+import { CHANNEL_ATTACHMENTS_FOLDER_ID, driveDocumentKind, stripDocumentKind } from './driveKinds'
+import { type ReactNode, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/ui/Badge/Badge'
 import { Button } from '@/ui/Button/Button'
@@ -24,11 +26,12 @@ export interface WorkspaceDriveFileItem {
   readonly sizeBytes?: number | undefined
   readonly updatedAt?: string | undefined
   readonly folderId?: string | null | undefined
+  readonly previewable?: boolean | undefined
   readonly href?: string | undefined
 }
 
 export type DriveViewMode = 'grid' | 'list'
-export type DriveFilterKind = 'all' | 'folders' | 'documents' | 'files'
+export type DriveFilterKind = 'all' | 'folders' | 'documents' | 'bases' | 'whiteboards' | 'files'
 export type DriveSortField = 'name' | 'updatedAt'
 
 export const FOLDER_MARKDOWN_MARKER = '<!-- kodera:drive-folder -->'
@@ -83,7 +86,10 @@ function stripMarkdownPreview(markdown: string): string {
     .replace(/\x60{3}[\s\S]*?\x60{3}/g, ' ')
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^>\s*(\[![A-Z]+\])?\s*/gm, '')
-    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => alias || target)
+    .replace(
+      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+      (_m, target: string, alias?: string) => alias || target
+    )
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/[*_~\x60]/g, '')
     .replace(/\s+/g, ' ')
@@ -121,6 +127,11 @@ export interface DocsDriveExplorerProps {
   readonly onCreateFolder: (title: string, parentId: string | null) => Promise<void> | void
   readonly onCreateDocumentInFolder: (parentId: string | null) => Promise<void> | void
   readonly canEdit: boolean
+  readonly onCreateKind?:
+    ((kind: 'base' | 'whiteboard', parentId: string | null) => void | Promise<void>) | undefined
+  readonly uploadSlot?: ReactNode
+  readonly onUploadFiles?: ((files: readonly File[]) => void) | undefined
+  readonly onOpenFile?: ((file: WorkspaceDriveFileItem) => void) | undefined
   readonly files?: readonly WorkspaceDriveFileItem[] | undefined
 }
 
@@ -134,10 +145,16 @@ export function DocsDriveExplorer({
   onCreateFolder,
   onCreateDocumentInFolder,
   canEdit,
+  onCreateKind,
+  uploadSlot,
+  onUploadFiles,
+  onOpenFile,
   files = [],
 }: DocsDriveExplorerProps) {
   const { i18n } = useTranslation()
   const copy = getDocsDriveCopy(i18n.resolvedLanguage)
+  const uploadInputId = useId()
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const searchInputId = useId()
   const folderInputId = useId()
   const folderInputRef = useRef<HTMLInputElement | null>(null)
@@ -149,16 +166,23 @@ export function DocsDriveExplorer({
   const [searchQuery, setSearchQuery] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [folderDraft, setFolderDraft] = useState('')
+  const pendingCreationsRef = useRef(new Set<string>())
+  const [pendingCreations, setPendingCreations] = useState<ReadonlySet<string>>(new Set())
+  const runCreation = async (kind: string, create: () => void | Promise<void>) => {
+    if (pendingCreationsRef.current.has(kind)) return
+    pendingCreationsRef.current.add(kind)
+    setPendingCreations(new Set(pendingCreationsRef.current))
+    try {
+      await create()
+    } finally {
+      pendingCreationsRef.current.delete(kind)
+      setPendingCreations(new Set(pendingCreationsRef.current))
+    }
+  }
 
-  const nodeById = useMemo(
-    () => new Map(treeNodes.map((node) => [node.doc.id, node])),
-    [treeNodes]
-  )
+  const nodeById = useMemo(() => new Map(treeNodes.map((node) => [node.doc.id, node])), [treeNodes])
 
-  const docById = useMemo(
-    () => new Map(documents.map((doc) => [doc.id, doc])),
-    [documents]
-  )
+  const docById = useMemo(() => new Map(documents.map((doc) => [doc.id, doc])), [documents])
 
   const resolvedFolderId =
     activeFolderId !== null && docById.has(activeFolderId) ? activeFolderId : null
@@ -166,11 +190,7 @@ export function DocsDriveExplorer({
   const isFolderDoc = useMemo(() => {
     const folderSet = new Set<string>()
     for (const node of treeNodes) {
-      if (
-        node.hasChildren ||
-        explicitFolderIds.has(node.doc.id) ||
-        isExplicitFolderMarkdown(node.doc.markdown)
-      ) {
+      if (explicitFolderIds.has(node.doc.id) || isExplicitFolderMarkdown(node.doc.markdown)) {
         folderSet.add(node.doc.id)
       }
     }
@@ -242,24 +262,31 @@ export function DocsDriveExplorer({
       return effectiveParent === resolvedFolderId
     })
 
-    const folders =
-      filterKind === 'documents' || filterKind === 'files'
-        ? []
-        : scopedNodes
-            .filter((node) => isFolderDoc(node.doc.id))
-            .map((node) => ({
-              node,
-              title: node.doc.title,
-              updatedAt: node.doc.updatedAt,
-            }))
-            .sort(compareItems)
-            .map((entry) => entry.node)
+    const folders = !['all', 'folders'].includes(filterKind)
+      ? []
+      : scopedNodes
+          .filter((node) => isFolderDoc(node.doc.id))
+          .map((node) => ({
+            node,
+            title: node.doc.title,
+            updatedAt: node.doc.updatedAt,
+          }))
+          .sort(compareItems)
+          .map((entry) => entry.node)
 
     const docs =
       filterKind === 'folders' || filterKind === 'files'
         ? []
         : scopedNodes
-            .filter((node) => !isFolderDoc(node.doc.id))
+            .filter(
+              (node) =>
+                !isFolderDoc(node.doc.id) &&
+                (filterKind === 'all' ||
+                  driveDocumentKind(node.doc.markdown) ===
+                    ({ documents: 'page', bases: 'base', whiteboards: 'whiteboard' } as const)[
+                      filterKind as 'documents' | 'bases' | 'whiteboards'
+                    ])
+            )
             .map((node) => ({
               node,
               title: node.doc.title,
@@ -268,20 +295,19 @@ export function DocsDriveExplorer({
             .sort(compareItems)
             .map((entry) => entry.node)
 
-    const matchedFiles =
-      filterKind === 'folders' || filterKind === 'documents'
-        ? []
-        : files
-            .filter((file) => {
-              if (normalizedNeedle) return matchesNeedle(file.name)
-              return (file.folderId ?? null) === resolvedFolderId
-            })
-            .sort((a, b) =>
-              compareItems(
-                { title: a.name, updatedAt: a.updatedAt ?? '' },
-                { title: b.name, updatedAt: b.updatedAt ?? '' }
-              )
+    const matchedFiles = !['all', 'files'].includes(filterKind)
+      ? []
+      : files
+          .filter((file) => {
+            if (normalizedNeedle) return matchesNeedle(file.name)
+            return (file.folderId ?? null) === resolvedFolderId
+          })
+          .sort((a, b) =>
+            compareItems(
+              { title: a.name, updatedAt: a.updatedAt ?? '' },
+              { title: b.name, updatedAt: b.updatedAt ?? '' }
             )
+          )
 
     return { visibleFolders: folders, visibleDocs: docs, visibleFiles: matchedFiles }
   }, [
@@ -301,7 +327,7 @@ export function DocsDriveExplorer({
     if (!trimmed) return
     setFolderDraft('')
     setCreatingFolder(false)
-    await onCreateFolder(trimmed, resolvedFolderId)
+    await runCreation('folder', () => onCreateFolder(trimmed, resolvedFolderId))
   }
 
   const toggleSort = (field: DriveSortField) => {
@@ -339,9 +365,7 @@ export function DocsDriveExplorer({
                 ) : null}
                 <button
                   type="button"
-                  data-testid={
-                    crumb.id === null ? 'drive-crumb-root' : `drive-crumb-${crumb.id}`
-                  }
+                  data-testid={crumb.id === null ? 'drive-crumb-root' : `drive-crumb-${crumb.id}`}
                   aria-current={isLast ? 'location' : undefined}
                   onClick={() => onNavigateFolder(crumb.id)}
                   className={cx(
@@ -381,6 +405,8 @@ export function DocsDriveExplorer({
               size="sm"
               variant="secondary"
               data-testid="drive-new-folder-btn"
+              disabled={pendingCreations.has('folder')}
+              loading={pendingCreations.has('folder')}
               icon={
                 <svg
                   aria-hidden="true"
@@ -420,10 +446,42 @@ export function DocsDriveExplorer({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 3v10M3 8h10" />
                 </svg>
               }
-              onClick={() => void onCreateDocumentInFolder(resolvedFolderId)}
+              disabled={pendingCreations.has('page')}
+              loading={pendingCreations.has('page')}
+              onClick={() =>
+                void runCreation('page', () => onCreateDocumentInFolder(resolvedFolderId))
+              }
             >
               {copy.newDocHere}
             </Button>
+            {onCreateKind ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={pendingCreations.has('base')}
+                  loading={pendingCreations.has('base')}
+                  onClick={() =>
+                    void runCreation('base', () => onCreateKind('base', resolvedFolderId))
+                  }
+                >
+                  {copy.newBase}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={pendingCreations.has('whiteboard')}
+                  loading={pendingCreations.has('whiteboard')}
+                  onClick={() =>
+                    void runCreation('whiteboard', () =>
+                      onCreateKind('whiteboard', resolvedFolderId)
+                    )
+                  }
+                >
+                  {copy.newWhiteboard}
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -464,7 +522,8 @@ export function DocsDriveExplorer({
             size="sm"
             variant="primary"
             data-testid="drive-new-folder-submit"
-            disabled={folderDraft.trim().length === 0}
+            disabled={folderDraft.trim().length === 0 || pendingCreations.has('folder')}
+            loading={pendingCreations.has('folder')}
           >
             {copy.createFolderConfirm}
           </Button>
@@ -527,7 +586,9 @@ export function DocsDriveExplorer({
                 { id: 'all', label: copy.filterAll },
                 { id: 'folders', label: copy.filterFolders },
                 { id: 'documents', label: copy.filterDocuments },
-                ...(files.length > 0 ? [{ id: 'files' as const, label: copy.filterFiles }] : []),
+                { id: 'bases', label: copy.filterBases },
+                { id: 'whiteboards', label: copy.filterWhiteboards },
+                { id: 'files', label: copy.filterFiles },
               ] as const
             ).map((pill) => {
               const active = filterKind === pill.id
@@ -568,7 +629,7 @@ export function DocsDriveExplorer({
                   : 'text-c-ink-2 hover:text-c-ink'
               )}
             >
-              <span>A–Z</span>
+              <span>{copy.sortByName}</span>
               {sortField === 'name' ? (
                 <span aria-hidden="true">{sortDirection === 'asc' ? '↑' : '↓'}</span>
               ) : null}
@@ -599,6 +660,7 @@ export function DocsDriveExplorer({
                 <circle cx="8" cy="8" r="5.5" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 5v3.2l2.2 1.3" />
               </svg>
+              <span>{copy.sortByUpdated}</span>
               {sortField === 'updatedAt' ? (
                 <span aria-hidden="true">{sortDirection === 'asc' ? '↑' : '↓'}</span>
               ) : null}
@@ -670,6 +732,47 @@ export function DocsDriveExplorer({
       </div>
 
       {/* Empty States */}
+      {uploadSlot ?? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-c-border-input bg-c-sunken p-4 text-xs text-c-ink-3"
+          onDragOver={(event) => {
+            if (canEdit && onUploadFiles) event.preventDefault()
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            if (canEdit) onUploadFiles?.([...event.dataTransfer.files])
+          }}
+        >
+          <span>{copy.dropFiles}</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!canEdit || !onUploadFiles}
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            {copy.uploadFiles}
+          </Button>
+          <input
+            ref={uploadInputRef}
+            className="sr-only"
+            id={uploadInputId}
+            aria-label={copy.uploadFiles}
+            type="file"
+            multiple
+            disabled={!canEdit || !onUploadFiles}
+            onChange={(event) => {
+              if (canEdit) onUploadFiles?.([...(event.target.files ?? [])])
+              event.target.value = ''
+            }}
+          />
+        </div>
+      )}
+      {resolvedFolderId === CHANNEL_ATTACHMENTS_FOLDER_ID ? (
+        <p className="rounded-md border border-c-border-soft bg-c-sunken p-3 text-xs text-c-ink-2">
+          {copy.attachmentsNotice}
+        </p>
+      ) : null}
+
       {totalVisible === 0 ? (
         <div
           data-testid="drive-empty-state"
@@ -688,7 +791,7 @@ export function DocsDriveExplorer({
           {/* Folders Grid */}
           {visibleFolders.length > 0 ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold text-c-ink-2">{copy.foldersHeading}</h3>
+              <h2 className="text-xs font-semibold text-c-ink-2">{copy.foldersHeading}</h2>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {visibleFolders.map((node) => (
                   <div
@@ -720,16 +823,14 @@ export function DocsDriveExplorer({
                         <span className="truncate text-sm font-semibold text-c-ink">
                           {node.doc.title}
                         </span>
-                        <span className="truncate text-xs text-c-ink-3">
-                          {copy.folderCount(node.childCount)}
-                          {normalizedNeedle ? ` · ${locationLabelOf(node.doc.parentId)}` : ''}
-                        </span>
                       </span>
                     </button>
 
                     <button
                       type="button"
                       data-testid={`drive-edit-folder-note-${node.doc.id}`}
+                      hidden={node.doc.id === CHANNEL_ATTACHMENTS_FOLDER_ID}
+                      disabled={node.doc.id === CHANNEL_ATTACHMENTS_FOLDER_ID}
                       aria-label={copy.openFolderIndexNamed(node.doc.title)}
                       title={copy.openFolderIndexNamed(node.doc.title)}
                       onClick={() => onOpenDocument(node.doc.id, node.doc.parentId)}
@@ -759,61 +860,102 @@ export function DocsDriveExplorer({
             </div>
           ) : null}
 
-          {/* Documents Preview Grid */}
           {visibleDocs.length > 0 ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold text-c-ink-2">{copy.documentsHeading}</h3>
+              <h2 className="text-xs font-semibold text-c-ink-2">{copy.documentsHeading}</h2>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {visibleDocs.map((node) => {
-                  const snippet = stripMarkdownPreview(node.doc.markdown)
+                  const snippet = stripMarkdownPreview(stripDocumentKind(node.doc.markdown))
+                  const kind = driveDocumentKind(node.doc.markdown)
                   return (
-                    <button
+                    <article
                       key={node.doc.id}
-                      type="button"
-                      data-testid={`drive-doc-card-${node.doc.id}`}
-                      aria-label={copy.openDocumentNamed(node.doc.title)}
-                      onClick={() => onOpenDocument(node.doc.id, node.doc.parentId)}
-                      className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-c-border bg-c-surface text-left shadow-card transition-colors hover:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                      className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-c-border bg-c-surface shadow-card transition-colors hover:border-c-accent-ink"
                     >
-                      <div className="flex h-[108px] w-full flex-col gap-1 overflow-hidden border-b border-c-border-soft bg-c-page p-3">
-                        <div className="flex h-full w-full flex-col gap-1 overflow-hidden rounded-md border border-c-border-soft bg-c-surface p-2">
-                          <span className="truncate text-xs font-semibold text-c-ink">
-                            {node.doc.title}
-                          </span>
-                          <p className="line-clamp-3 text-xs leading-relaxed text-c-ink-3">
-                            {snippet || '—'}
-                          </p>
-                        </div>
+                      <div
+                        aria-hidden="true"
+                        className="flex h-[108px] flex-col gap-1 overflow-hidden border-b border-c-border-soft bg-c-page p-3"
+                      >
+                        {kind === 'base' ? (
+                          <div className="flex h-full gap-1">
+                            {[0, 1, 2].map((column) => (
+                              <div
+                                key={column}
+                                className="flex flex-1 flex-col gap-1 rounded-sm bg-c-muted p-1"
+                              >
+                                <span className="h-3 rounded-sm border border-c-border-soft bg-c-surface" />
+                                <span className="h-3 rounded-sm border border-c-border-soft bg-c-surface" />
+                              </div>
+                            ))}
+                          </div>
+                        ) : kind === 'whiteboard' ? (
+                          <svg viewBox="0 0 200 70" className="h-full w-full text-c-ink-3">
+                            <path d="M50 25H90V50H145" fill="none" stroke="currentColor" />
+                            <rect
+                              x="5"
+                              y="7"
+                              width="60"
+                              height="36"
+                              rx="3"
+                              className="fill-c-tag-3-bg stroke-c-border"
+                            />
+                            <rect
+                              x="115"
+                              y="33"
+                              width="70"
+                              height="34"
+                              rx="3"
+                              className="fill-c-tag-1-bg stroke-c-border"
+                            />
+                            <path
+                              d="M15 18h40M15 25h30M125 45h50M125 52h35"
+                              stroke="currentColor"
+                            />
+                          </svg>
+                        ) : (
+                          <div className="flex h-full flex-col gap-1 overflow-hidden rounded-md border border-c-border-soft bg-c-surface p-2">
+                            <span className="truncate text-xs font-semibold text-c-ink">
+                              {node.doc.title}
+                            </span>
+                            <p className="line-clamp-3 text-xs leading-relaxed text-c-ink-3">
+                              {snippet || '—'}
+                            </p>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col gap-2 p-3">
-                        <div className="flex items-center gap-2">
-                          <svg
-                            aria-hidden="true"
-                            viewBox="0 0 16 16"
-                            className="h-4 w-4 shrink-0 text-c-accent-ink"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M4 2.5h5.5L13 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z"
-                            />
-                            <path strokeLinecap="round" d="M9 2.5V6h3.5M5.5 9h5M5.5 11.5h3.5" />
-                          </svg>
-                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-c-ink">
-                            {node.doc.title}
-                          </span>
-                        </div>
+                        <button
+                          type="button"
+                          data-testid={`drive-doc-card-${node.doc.id}`}
+                          aria-label={copy.openDocumentNamed(node.doc.title)}
+                          onClick={() => onOpenDocument(node.doc.id, node.doc.parentId)}
+                          className="flex min-h-8 min-w-0 items-center gap-2 text-left text-sm font-semibold text-c-ink after:absolute after:inset-0 focus-visible:ring focus-visible:outline-hidden"
+                        >
+                          <KoderaIcon
+                            name={
+                              kind === 'base'
+                                ? 'grid'
+                                : kind === 'whiteboard'
+                                  ? 'workspace'
+                                  : 'docs'
+                            }
+                          />
+                          <span className="truncate">{node.doc.title}</span>
+                        </button>
                         <div className="flex items-center justify-between gap-2 text-xs text-c-ink-3">
-                          <span className="truncate">{locationLabelOf(node.doc.parentId)}</span>
+                          <span className="truncate">
+                            {kind === 'base'
+                              ? copy.modeBase
+                              : kind === 'whiteboard'
+                                ? copy.modeWhiteboard
+                                : locationLabelOf(node.doc.parentId)}
+                          </span>
                           <span className="shrink-0 font-mono">
                             {formatDriveDate(node.doc.updatedAt, i18n.resolvedLanguage)}
                           </span>
                         </div>
                       </div>
-                    </button>
+                    </article>
                   )
                 })}
               </div>
@@ -823,7 +965,7 @@ export function DocsDriveExplorer({
           {/* Optional Workspace Files Grid */}
           {visibleFiles.length > 0 ? (
             <div className="flex flex-col gap-2">
-              <h3 className="text-xs font-semibold text-c-ink-2">{copy.filesHeading}</h3>
+              <h2 className="text-xs font-semibold text-c-ink-2">{copy.filesHeading}</h2>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {visibleFiles.map((file) => {
                   const safeHref = safeDriveFileHref(file.href)
@@ -846,11 +988,15 @@ export function DocsDriveExplorer({
                             .join(' · ')}
                         </span>
                       </div>
-                      {safeHref !== null &&
-                      (safeHref.startsWith('https://') ||
-                        safeHref.startsWith('http://') ||
-                        safeHref.startsWith('mailto:') ||
-                        (safeHref.startsWith('/') && !safeHref.startsWith('//'))) ? (
+                      {onOpenFile && file.previewable ? (
+                        <Button size="sm" variant="secondary" onClick={() => onOpenFile(file)}>
+                          {file.name}
+                        </Button>
+                      ) : safeHref !== null &&
+                        (safeHref.startsWith('https://') ||
+                          safeHref.startsWith('http://') ||
+                          safeHref.startsWith('mailto:') ||
+                          (safeHref.startsWith('/') && !safeHref.startsWith('//'))) ? (
                         <a
                           href={safeHref}
                           target="_blank"
@@ -959,7 +1105,7 @@ export function DocsDriveExplorer({
                         <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3.1a1.5 1.5 0 0 1 1.06.44l.9.9H12.5A1.5 1.5 0 0 1 14 5.84v5.66A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z" />
                       </svg>
                       <span>{node.doc.title}</span>
-                      <span className="font-regular text-c-ink-3">
+                      <span aria-hidden="true" className="font-regular text-c-ink-3">
                         ({copy.folderCount(node.childCount)})
                       </span>
                     </button>
@@ -1030,11 +1176,15 @@ export function DocsDriveExplorer({
                     className="border-b border-c-hairline hover:bg-c-sunken"
                   >
                     <td className="px-4 py-2 font-semibold text-c-ink">
-                      {safeHref !== null &&
-                      (safeHref.startsWith('https://') ||
-                        safeHref.startsWith('http://') ||
-                        safeHref.startsWith('mailto:') ||
-                        (safeHref.startsWith('/') && !safeHref.startsWith('//'))) ? (
+                      {onOpenFile && file.previewable ? (
+                        <Button size="sm" variant="secondary" onClick={() => onOpenFile(file)}>
+                          {file.name}
+                        </Button>
+                      ) : safeHref !== null &&
+                        (safeHref.startsWith('https://') ||
+                          safeHref.startsWith('http://') ||
+                          safeHref.startsWith('mailto:') ||
+                          (safeHref.startsWith('/') && !safeHref.startsWith('//'))) ? (
                         <a
                           href={safeHref}
                           target="_blank"

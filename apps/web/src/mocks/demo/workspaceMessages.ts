@@ -17,7 +17,7 @@ export const workspaceDemoMessages = {
     community: {
       announcements: [
         'Exemple simulé d’annonces et de notes de version dans Kodera Community. Ce salon ne diffuse pas d’annonces officielles.',
-        `Simulation locale : essayez un échange dans #support. Pour toute question réelle sur le produit, écrivez à ${SUPPORT_EMAIL}.`,
+        `Simulation locale : essayez un échange dans #general. Pour toute question réelle sur le produit, écrivez à ${SUPPORT_EMAIL}.`,
       ],
       general: [
         'Bienvenue dans les discussions générales de la communauté Kodera.',
@@ -88,7 +88,7 @@ export const workspaceDemoMessages = {
     community: {
       announcements: [
         'Simulated example of announcements and release notes in Kodera Community. This channel does not publish official announcements.',
-        `Local simulation: try a conversation in #support. For real product questions, email ${SUPPORT_EMAIL}.`,
+        `Local simulation: try a conversation in #general. For real product questions, email ${SUPPORT_EMAIL}.`,
       ],
       general: [
         'Welcome to general discussions in the Kodera community.',

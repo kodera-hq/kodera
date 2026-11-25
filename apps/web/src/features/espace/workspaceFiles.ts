@@ -1,3 +1,4 @@
+import { permitsPlaintext } from '../confidential/room-boundary'
 // Everything the workspace holds that is not a message: the files its channels carry and the
 // documents written in them, gathered across every resolved room into one list
 // (docs/specs/messaging-media-and-notifications.md).
@@ -85,6 +86,15 @@ export function workspaceFilesOf(
       direct === undefined
         ? snapshot.channels.get(channel.id)
         : { state: 'resolved' as const, roomId: direct.roomId }
+    const flags = channel as ChannelSearchEntry & {
+      isConfidential?: boolean
+      is_confidential?: boolean
+    }
+    if (flags.isConfidential || flags.is_confidential) continue
+    if (resolved?.state !== 'resolved') continue
+    const room = snapshot.rooms.find((entry) => entry.roomId === resolved.roomId)
+    const boundary = store.getRoomBoundary?.(resolved.roomId) ?? room?.confidentiality
+    if (boundary === undefined || !permitsPlaintext(boundary)) continue
     if (resolved?.state === 'resolved') {
       for (const message of store.getTimeline(resolved.roomId)) {
         if (message.redacted) continue

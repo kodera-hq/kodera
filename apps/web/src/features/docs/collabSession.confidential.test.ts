@@ -55,7 +55,12 @@ function fakeCipher(overrides: Partial<ConfidentialCollabCipher> = {}): Confiden
     ...overrides,
   }
 }
-function create(cipher: ConfidentialCollabCipher | null, socket = new Socket(), epoch = 7, senderClientId = cipher?.senderClientId ?? 303) {
+function create(
+  cipher: ConfidentialCollabCipher | null,
+  socket = new Socket(),
+  epoch = 7,
+  senderClientId = cipher?.senderClientId ?? 303
+) {
   const fetchSession = vi.fn(async () => ({
     wsUrl: 'wss://relay.invalid/page',
     token: 'short-ticket',
@@ -94,7 +99,7 @@ describe('confidential collaboration transport', () => {
     await settle()
     expect(open).not.toHaveBeenCalled()
     expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-a:page-a')
-    expect(deleteDatabase).toHaveBeenCalledWith('kodera-docs-yjs:workspace-a:legacy-page')
+    expect(deleteDatabase).not.toHaveBeenCalledWith('kodera-docs-yjs:workspace-a:legacy-page')
     expect(deleteDatabase).not.toHaveBeenCalledWith('kodera-docs-yjs:other-workspace:keep')
 
     for (const boundary of ['unknown', 'invalid', 'confidential-unavailable'] as const) {
@@ -424,18 +429,14 @@ describe('real encrypted Yjs peer transport', () => {
       const hasKind3 = sockets[1]!.frames.some(
         (f) =>
           f instanceof Uint8Array &&
-          new TextDecoder()
-            .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
-            .includes('"kind":3')
+          new TextDecoder().decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!))).includes('"kind":3')
       )
       expect(hasKind3).toBe(true)
     })
     const checkpointFrame = sockets[1]!.frames.find(
       (f): f is Uint8Array =>
         f instanceof Uint8Array &&
-        new TextDecoder()
-          .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
-          .includes('"kind":3')
+        new TextDecoder().decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!))).includes('"kind":3')
     )!
     // Brand-new viewer at epoch 7 opens the compacted kind===3 checkpoint and hydrates full text!
     const viewer = create(realCipher(505))
@@ -464,9 +465,7 @@ describe('real encrypted Yjs peer transport', () => {
       receiver.socket.frames.some(
         (f) =>
           f instanceof Uint8Array &&
-          new TextDecoder()
-            .decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!)))
-            .includes('"kind":3')
+          new TextDecoder().decode(f.subarray(6, 6 + ((f[4]! << 8) | f[5]!))).includes('"kind":3')
       )
     ).toBe(false)
 

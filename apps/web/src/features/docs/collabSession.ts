@@ -220,8 +220,6 @@ export function recordDocsOfflineDatabase(dbName: string): void {
 
 export function purgeProtectedDocsOfflineDatabases(scopeKey: string, documentId: string): void {
   const targetDb = buildDocsOfflineDatabaseName(scopeKey, documentId)
-  const safeScope = scopeKey.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48)
-  const scopePrefix = `${DOCS_COLLAB_DATABASE_PREFIX}${safeScope}:`
   const toDelete = new Set<string>([targetDb])
 
   try {
@@ -232,7 +230,7 @@ export function purgeProtectedDocsOfflineDatabases(scopeKey: string, documentId:
         const kept: string[] = []
         for (const item of parsed) {
           if (typeof item !== 'string' || !item.startsWith(DOCS_COLLAB_DATABASE_PREFIX)) continue
-          if (item === targetDb || item.startsWith(scopePrefix)) {
+          if (item === targetDb) {
             toDelete.add(item)
           } else {
             kept.push(item)
@@ -262,7 +260,7 @@ export function purgeProtectedDocsOfflineDatabases(scopeKey: string, documentId:
             for (const entry of entries) {
               if (
                 typeof entry.name === 'string' &&
-                (entry.name === targetDb || entry.name.startsWith(scopePrefix)) &&
+                entry.name === targetDb &&
                 !toDelete.has(entry.name)
               ) {
                 try {
@@ -561,6 +559,11 @@ export class CollabSessionController {
     return () => {
       this.listeners.delete(listener)
     }
+  }
+
+  /** Local Markdown must not seed a second copy before the offline Yjs state has arrived. */
+  get offlineCacheReady(): boolean {
+    return this.persistence === null || this.offlineSynced
   }
 
   getSnapshot = (): CollabSessionSnapshot => this.cachedSnapshot

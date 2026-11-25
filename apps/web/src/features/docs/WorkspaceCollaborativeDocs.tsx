@@ -1,7 +1,29 @@
+import { ApiProblem } from '@/api/client'
+import { NARROW_LAYOUT_QUERY } from '@/app/layoutQuery'
+import { DriveWorkspaceContext } from './DriveWorkspaceContext'
+import {
+  CHANNEL_ATTACHMENTS_FOLDER_ID,
+  DOCUMENT_KIND_MARKERS,
+  driveDocumentKind,
+  ensureDriveKindMarker,
+  preserveDocumentKind,
+  readDriveCollectionRows,
+  writeDriveCollectionRows,
+  stripDocumentKind,
+  type DriveDocumentKind,
+} from './driveKinds'
+import { workspaceFilesOf } from '../espace/workspaceFiles'
+import { FilesUpload } from '../espace/FilesUpload'
+import { Dialog } from '@/ui/Dialog/Dialog'
+import { KoderaIcon } from '@/ui/icons/KoderaIcons'
+import type { ChannelDoc } from './ChannelDocsEditor'
+import { createDefaultCollectionSchema, type WorkspaceCollectionRowModel } from './collectionSchema'
 import type { JSONContent } from '@tiptap/core'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import {
   lazy,
+  useContext,
+  useCallback,
   Suspense,
   useEffect,
   useId,
@@ -28,6 +50,7 @@ import {
   maySeedFromMarkdown,
   OFFLINE_CACHE_ORIGIN,
   REMOTE_SYNC_ORIGIN,
+  purgeProtectedDocsOfflineDatabases,
   type CollabSessionSnapshot,
   type ConfidentialCollabPolicy,
   type WebSocketLike,
@@ -77,6 +100,9 @@ import {
 
 export interface WorkspacePageRecord {
   readonly id: string
+  readonly sourceDocumentId?: string | undefined
+  readonly sourceChannelId?: string | undefined
+  readonly sourceRoomId?: string | undefined
   readonly parentId: string | null
   readonly title: string
   readonly markdown: string
@@ -86,12 +112,11 @@ export interface WorkspacePageRecord {
 }
 
 export type WorkspaceEditorSurface =
-  | 'drive'
-  | 'blocks'
-  | 'markdown'
-  | 'whiteboard'
-  | 'collections'
+  'drive' | 'blocks' | 'markdown' | 'whiteboard' | 'collections' | 'core-collections'
 
+const LazyFileLightboxModal = lazy(() =>
+  import('../espace/FileLightboxModal').then((m) => ({ default: m.FileLightboxModal }))
+)
 const LazyDocsCollectionView = lazy(() => import('./DocsCollectionView'))
 const LazyWhiteboardCanvas = lazy(() =>
   import('@/features/whiteboard/WhiteboardCanvas').then((m) => ({ default: m.WhiteboardCanvas }))
@@ -111,6 +136,7 @@ export interface WorkspaceCollaborativeDocsProps {
       }
     | undefined
   readonly members?: readonly CollectionAssigneeMember[] | undefined
+  readonly surfaceRequestKey?: number | undefined
   readonly initialSurface?: WorkspaceEditorSurface | undefined
   readonly activeDocumentId?: string | undefined
   readonly onActiveDocumentChange?: ((documentId: string) => void) | undefined
@@ -118,6 +144,8 @@ export interface WorkspaceCollaborativeDocsProps {
   readonly localDocuments?: readonly WorkspacePageRecord[] | undefined
   readonly onLocalDocumentsChange?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
   readonly workspaceFiles?: readonly WorkspaceDriveFileItem[] | undefined
+  readonly onPublishToChannel?: ((document: WorkspacePageRecord) => Promise<void>) | undefined
+  readonly onUploadFiles?: ((files: readonly File[]) => void) | undefined
   readonly confidential?: ConfidentialCollabPolicy | undefined
   readonly roomBoundary?: RoomBoundary | undefined
   readonly webSocketFactory?: ((url: string) => WebSocketLike) | undefined
@@ -208,6 +236,18 @@ interface ScheduledSave {
 
 const MAX_PRESERVED_CONFLICTS = 8
 const MAX_TRACKED_DOCUMENTS = 64
+const inFlightTypedCreations = new Map<
+  string,
+  {
+    promise: Promise<{
+      result: Awaited<ReturnType<typeof createWorkspaceDocument>>
+      acknowledge: () => void
+    }>
+    participants: Set<() => boolean>
+  }
+>()
+let pendingTypedCreations: ReadonlyMap<string, string> | null = null
+const unpersistedTypedCreations = new Map<string, { docId: string; remove: boolean }>()
 
 function withNewestEntry<V>(
   map: ReadonlyMap<string, V>,
@@ -242,6 +282,7 @@ function conflictKindOf(error: unknown): PageWriteConflict['kind'] | null {
 }
 
 interface CollabControllerBridgeSnapshot {
+  readonly documentId: string | undefined
   readonly controller: CollabSessionController | null
   readonly session: CollabSessionSnapshot
 }
@@ -255,6 +296,7 @@ const IDLE_SESSION: CollabSessionSnapshot = {
 }
 
 const IDLE_BRIDGE_SNAPSHOT: CollabControllerBridgeSnapshot = {
+  documentId: undefined,
   controller: null,
   session: IDLE_SESSION,
 }
@@ -274,13 +316,13 @@ class CollabControllerBridge {
 
   readonly getSnapshot = (): CollabControllerBridgeSnapshot => this.cached
 
-  attach(next: CollabSessionController): void {
+  attach(next: CollabSessionController, documentId: string): void {
     this.unsubscribeController?.()
     this.controller = next
-    this.cached = { controller: next, session: next.getSnapshot() }
+    this.cached = { documentId, controller: next, session: next.getSnapshot() }
     this.unsubscribeController = next.subscribe(() => {
       if (this.controller !== next) return
-      this.cached = { controller: next, session: next.getSnapshot() }
+      this.cached = { documentId, controller: next, session: next.getSnapshot() }
       this.emit()
     })
     this.emit()
@@ -306,7 +348,8 @@ export function WorkspaceCollaborativeDocs({
   organisationId,
   currentUser = { id: 'local-member', name: 'Member' },
   members = [],
-  initialSurface = 'blocks',
+  initialSurface = 'drive',
+  surfaceRequestKey,
   activeDocumentId,
   onActiveDocumentChange,
   onDocumentsLoaded,
@@ -315,8 +358,48 @@ export function WorkspaceCollaborativeDocs({
   workspaceFiles = [],
   webSocketFactory,
   confidential,
-  roomBoundary,
+  roomBoundary: suppliedRoomBoundary,
+  onPublishToChannel,
+  onUploadFiles,
 }: WorkspaceCollaborativeDocsProps) {
+  const driveContext = useContext(DriveWorkspaceContext)
+  const candidateBoundary = suppliedRoomBoundary ?? driveContext?.roomBoundary
+  const roomBoundary =
+    driveContext?.isConfidential &&
+    (candidateBoundary === undefined || permitsPlaintext(candidateBoundary))
+      ? 'confidential-unavailable'
+      : candidateBoundary
+  const plaintextBlocked =
+    Boolean(confidential?.required) ||
+    Boolean(driveContext?.isConfidential) ||
+    (roomBoundary !== undefined && !permitsPlaintext(roomBoundary))
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareFeedback, setShareFeedback] = useState('')
+  const [publishFeedback, setPublishFeedback] = useState('')
+  const [publishing, setPublishing] = useState(false)
+  const [treeOpen, setTreeOpen] = useState(
+    () => !(window.matchMedia?.(NARROW_LAYOUT_QUERY).matches ?? false)
+  )
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
+  const lightboxReturnFocus = useRef<HTMLElement | null>(null)
+  const [importedDocs, setImportedDocs] = useState<readonly WorkspacePageRecord[]>([])
+  const sourceRoom = driveContext?.activeChannelId
+    ? driveContext.snapshot.channels.get(driveContext.activeChannelId)
+    : undefined
+  const sourceKey = JSON.stringify([
+    driveContext?.workspaceId,
+    driveContext?.activeChannelId,
+    sourceRoom?.state === 'resolved' ? sourceRoom.roomId : null,
+    plaintextBlocked,
+  ])
+  const [importSourceKey, setImportSourceKey] = useState(sourceKey)
+  if (sourceKey !== importSourceKey) {
+    setImportSourceKey(sourceKey)
+    setImportedDocs([])
+  }
+  const [collectionRows, setCollectionRows] = useState<
+    Readonly<Record<string, readonly WorkspaceCollectionRowModel[]>>
+  >({})
   const { t, i18n } = useTranslation()
   const collectionCopy = getCollectionCopy(i18n.resolvedLanguage)
   const driveCopy = getDocsDriveCopy(i18n.resolvedLanguage)
@@ -327,29 +410,106 @@ export function WorkspaceCollaborativeDocs({
   const isControlledLocal = localDocuments !== undefined
   const isRemoteMode = Boolean(organisationId) && !isControlledLocal
 
+  const entries = useMemo(
+    () =>
+      driveContext
+        ? workspaceFilesOf(
+            driveContext.store,
+            driveContext.snapshot,
+            driveContext.channels,
+            driveContext.documents
+          )
+        : [],
+    [driveContext]
+  )
   const [internalDocs, setInternalDocs] = useState<readonly WorkspacePageRecord[]>(
     () => localDocuments ?? []
   )
-  const docs = isControlledLocal ? localDocuments : internalDocs
+  const ownedDocs = isControlledLocal ? localDocuments : internalDocs
+  const docs = useMemo(
+    () => [
+      ...ownedDocs,
+      ...importedDocs.filter(
+        (doc) =>
+          !ownedDocs.some((owned) => owned.id === doc.id) &&
+          entries.some(
+            (entry) =>
+              entry.document?.id === doc.sourceDocumentId &&
+              entry.channel.id === doc.sourceChannelId &&
+              (doc.sourceChannelId === '' ||
+                (driveContext?.snapshot.channels.get(entry.channel.id)?.state === 'resolved' &&
+                  (driveContext.snapshot.channels.get(entry.channel.id) as { roomId: string })
+                    .roomId === doc.sourceRoomId))
+          )
+      ),
+    ],
+    [ownedDocs, importedDocs, entries, driveContext]
+  )
 
-  const [selectedId, setSelectedId] = useState<string | undefined>(activeDocumentId)
+  const [selectedId, setSelectedId] = useState<string | undefined>(
+    () =>
+      activeDocumentId ?? new URLSearchParams(window.location.search).get('document') ?? undefined
+  )
   const [prevActiveDocumentId, setPrevActiveDocumentId] = useState<string | undefined>(
     activeDocumentId
   )
+  const [templateKey, setTemplateKey] = useState<DocumentTemplateKey>('blank')
+  const [editorSurface, setEditorSurface] = useState<WorkspaceEditorSurface>(() => {
+    const doc = docs.find((doc) => doc.id === selectedId)
+    const kind = driveDocumentKind(doc?.markdown ?? '')
+    if (initialSurface === 'core-collections') return initialSurface
+    return selectedId
+      ? kind === 'base'
+        ? 'collections'
+        : kind === 'whiteboard'
+          ? 'whiteboard'
+          : initialSurface === 'drive'
+            ? 'blocks'
+            : initialSurface
+      : initialSurface
+  })
   if (activeDocumentId !== prevActiveDocumentId) {
     setPrevActiveDocumentId(activeDocumentId)
     if (activeDocumentId !== undefined) {
       setSelectedId(activeDocumentId)
+      const kind = driveDocumentKind(
+        docs.find((doc) => doc.id === activeDocumentId)?.markdown ?? ''
+      )
+      setEditorSurface(
+        kind === 'base' ? 'collections' : kind === 'whiteboard' ? 'whiteboard' : 'blocks'
+      )
     }
   }
 
-  const [templateKey, setTemplateKey] = useState<DocumentTemplateKey>('blank')
-  const [editorSurface, setEditorSurface] = useState<WorkspaceEditorSurface>(initialSurface)
+  const [previousSurfaceRequest, setPreviousSurfaceRequest] = useState(surfaceRequestKey)
+  if (surfaceRequestKey !== previousSurfaceRequest) {
+    setPreviousSurfaceRequest(surfaceRequestKey)
+    setEditorSurface(initialSurface)
+  }
+  const [treeError, setTreeError] = useState<string | null>(null)
   const [driveFolderId, setDriveFolderId] = useState<string | null>(null)
+  const [unavailableDocumentId, setUnavailableDocumentId] = useState<string | null>(null)
+  const resetDriveRoot = () => {
+    setSelectedId(undefined)
+    setTreeError(null)
+    setDriveFolderId(null)
+    setEditorSurface('drive')
+  }
+  const [previousNavigationRequest, setPreviousNavigationRequest] = useState(
+    driveContext?.navigationRequestKey
+  )
+  if (driveContext?.navigationRequestKey !== previousNavigationRequest) {
+    setPreviousNavigationRequest(driveContext?.navigationRequestKey)
+    resetDriveRoot()
+  }
+  const [previousCanvasMode, setPreviousCanvasMode] = useState(driveContext?.canvasMode)
+  if (driveContext?.canvasMode !== previousCanvasMode) {
+    setPreviousCanvasMode(driveContext?.canvasMode)
+    if (driveContext?.canvasMode === 'files') resetDriveRoot()
+  }
   const [explicitFolderIds, setExplicitFolderIds] = useState<ReadonlySet<string>>(() => new Set())
   const [tocOpen, setTocOpen] = useState(true)
   const [isSavingRemote, setIsSavingRemote] = useState(false)
-  const [treeError, setTreeError] = useState<string | null>(null)
 
   const editorRegionRef = useRef<HTMLDivElement | null>(null)
   const conflictsRef = useRef<ReadonlyMap<string, PageWriteConflict>>(NO_CONFLICTS)
@@ -368,12 +528,20 @@ export function WorkspaceCollaborativeDocs({
   // Debounced writes, one per page: editing page B inside the debounce window must not cancel the
   // write page A still owes the server.
   const saveTimersRef = useRef<Map<string, ScheduledSave>>(new Map())
-  const inFlightSavesRef = useRef<Set<symbol>>(new Set())
+  const inFlightSavesRef = useRef<Map<symbol, string>>(new Map())
   const writeGenerationsRef = useRef<ReadonlyMap<string, number>>(new Map())
   const docsRef = useRef<readonly WorkspacePageRecord[]>(docs)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
   const protectionRef = useRef(confidential)
   const roomBoundaryRef = useRef(roomBoundary)
+  const driveContextRef = useRef(driveContext)
+  useLayoutEffect(() => {
+    driveContextRef.current = driveContext
+  }, [driveContext])
+
+  const permitsRemoteBodyWrite = () =>
+    !protectionRef.current?.required &&
+    (roomBoundaryRef.current === undefined || permitsPlaintext(roomBoundaryRef.current))
 
   useLayoutEffect(() => {
     protectionRef.current = confidential
@@ -390,8 +558,33 @@ export function WorkspaceCollaborativeDocs({
   }, [confidential, roomBoundary])
 
   useLayoutEffect(() => {
+    // Revoke the source cache before filtering detaches its controller.
+    for (const previous of docsRef.current) {
+      if (!previous.sourceChannelId || !previous.sourceRoomId || !driveContext) continue
+      const channel = driveContext.channels.find((item) => item.id === previous.sourceChannelId)
+      const boundary =
+        driveContext.store.getRoomBoundary?.(previous.sourceRoomId) ??
+        driveContext.snapshot.rooms.find((room) => room.roomId === previous.sourceRoomId)
+          ?.confidentiality
+      const sourceIsActive = previous.sourceChannelId === driveContext.activeChannelId
+      const activeSourceProtected =
+        sourceIsActive &&
+        (driveContext.isConfidential ||
+          (driveContext.roomBoundary !== undefined && !permitsPlaintext(driveContext.roomBoundary)))
+      if (
+        activeSourceProtected ||
+        channel?.is_confidential ||
+        channel?.isConfidential ||
+        (boundary !== undefined && !permitsPlaintext(boundary))
+      ) {
+        const attached = controllerBridge.getSnapshot()
+        if (attached.documentId === previous.id && attached.controller)
+          attached.controller.setRoomBoundary('confidential-unavailable')
+        else purgeProtectedDocsOfflineDatabases(organisationId ?? 'local-workspace', previous.id)
+      }
+    }
     docsRef.current = docs
-  }, [docs])
+  }, [controllerBridge, docs, driveContext, organisationId])
 
   useLayoutEffect(() => {
     const held = conflictsRef.current
@@ -413,20 +606,46 @@ export function WorkspaceCollaborativeDocs({
     onDocumentsLoadedRef.current = onDocumentsLoaded
   }, [onDocumentsLoaded])
 
-  const commitDocs = (
-    updater: (prev: readonly WorkspacePageRecord[]) => readonly WorkspacePageRecord[]
-  ) => {
-    if (isControlledLocal) {
-      const next = updater(localDocuments)
-      onLocalDocumentsChange?.(next)
-    } else {
-      setInternalDocs((prev) => {
-        const next = updater(prev)
-        onDocumentsLoadedRef.current?.(next)
-        return next
-      })
-    }
-  }
+  const commitDocs = useCallback(
+    (updater: (prev: readonly WorkspacePageRecord[]) => readonly WorkspacePageRecord[]) => {
+      const previous = docsRef.current
+      const next = updater(previous)
+      if (next.length === previous.length && next.every((doc, index) => doc === previous[index]))
+        return
+      for (const doc of next) {
+        if (!doc.sourceChannelId || plaintextBlocked) continue
+        const source = entries.find(
+          (entry) =>
+            entry.document?.id === doc.id.slice('channel:'.length) &&
+            entry.channel.id === doc.sourceChannelId
+        )
+        if (!source?.document) continue
+        if (doc.title !== source.document.title || doc.markdown !== source.document.content) {
+          driveContext?.onUpdateChannelDocument?.(doc.sourceChannelId, source.document.id, {
+            title: doc.title,
+            content: doc.markdown,
+          })
+        }
+      }
+      docsRef.current = next
+      const importedIds = new Set(importedDocs.map((doc) => doc.id))
+      if (importedIds.size > 0) setImportedDocs(next.filter((doc) => importedIds.has(doc.id)))
+      const nextOwned = next.filter((doc) => !importedIds.has(doc.id))
+      if (isControlledLocal) onLocalDocumentsChange?.(nextOwned)
+      else {
+        setInternalDocs(nextOwned)
+        onDocumentsLoadedRef.current?.(nextOwned)
+      }
+    },
+    [
+      driveContext,
+      entries,
+      importedDocs,
+      isControlledLocal,
+      onLocalDocumentsChange,
+      plaintextBlocked,
+    ]
+  )
 
   // Initial list load in Core 0.43.0 mode.
   useEffect(() => {
@@ -444,7 +663,13 @@ export function WorkspaceCollaborativeDocs({
           updatedAt: item.updatedAt,
           order: idx,
         }))
-        setInternalDocs(mapped)
+        setInternalDocs((prev) => {
+          const loaded = new Map(prev.map((doc) => [doc.id, doc]))
+          return [
+            ...mapped.map((doc) => loaded.get(doc.id) ?? doc),
+            ...prev.filter((doc) => !mapped.some((item) => item.id === doc.id)),
+          ]
+        })
         onDocumentsLoadedRef.current?.(mapped)
         setSelectedId((prev) => prev ?? mapped[0]?.id)
       })
@@ -464,14 +689,27 @@ export function WorkspaceCollaborativeDocs({
   const currentNode = useMemo(() => {
     if (selectedId) {
       const found = treeNodes.find((node) => node.doc.id === selectedId)
-      if (found) return found
+      return found
     }
     return treeNodes[0]
   }, [selectedId, treeNodes])
 
   const currentDoc = currentNode?.doc
+  if (currentDoc && editorSurface !== 'drive' && editorSurface !== 'core-collections') {
+    const kind = driveDocumentKind(currentDoc.markdown)
+    if (kind === 'base' && editorSurface !== 'collections') setEditorSurface('collections')
+    if (kind === 'whiteboard' && editorSurface !== 'whiteboard') setEditorSurface('whiteboard')
+  }
   const activeDocId = currentDoc?.id
   const activeDocRole = currentDoc?.role
+  // Sidebar room boundaries block plaintext actions, but only document protection owns its cache.
+  const sessionBoundary = activeDocId?.startsWith('channel:') ? roomBoundary : suppliedRoomBoundary
+  const sessionBoundaryRef = useRef(sessionBoundary)
+  useLayoutEffect(() => {
+    sessionBoundaryRef.current = sessionBoundary
+  }, [sessionBoundary])
+  const detailDocumentId = activeDocId ?? selectedId
+  const [detailRequestEpoch, setDetailRequestEpoch] = useState(0)
   const activeConflict = activeDocId ? conflicts.get(activeDocId) : undefined
 
   const ancestorFolders = useMemo(() => {
@@ -492,7 +730,9 @@ export function WorkspaceCollaborativeDocs({
   const isCurrentExplicitFolder =
     currentDoc !== undefined &&
     (explicitFolderIds.has(currentDoc.id) || isExplicitFolderMarkdown(currentDoc.markdown))
-  const visibleCurrentMarkdown = currentDoc ? stripFolderMarker(currentDoc.markdown) : ''
+  const visibleCurrentMarkdown = currentDoc
+    ? stripDocumentKind(stripFolderMarker(currentDoc.markdown))
+    : ''
 
   const outlineHeadings = useMemo(
     () => (currentDoc ? extractDocumentOutline(visibleCurrentMarkdown) : []),
@@ -501,16 +741,42 @@ export function WorkspaceCollaborativeDocs({
 
   // Fetch ETag + fresh document + backlinks when switching documents in Core 0.43.0 mode.
   useEffect(() => {
-    if (!isRemoteMode || !organisationId || !activeDocId) return
+    if (
+      !isRemoteMode ||
+      !organisationId ||
+      !detailDocumentId ||
+      detailDocumentId.startsWith('channel:')
+    )
+      return
+    const activeDocId = detailDocumentId
     const abort = new AbortController()
 
     void getWorkspaceDocument(organisationId, activeDocId, abort.signal)
       .then(({ document: fresh, etag }) => {
         if (abort.signal.aborted) return
+        setUnavailableDocumentId(null)
         const refused = conflictsRef.current.get(activeDocId)
+        const hasLocalWrite =
+          saveTimersRef.current.has(activeDocId) ||
+          [...inFlightSavesRef.current.values()].includes(activeDocId)
+        if (hasLocalWrite) return
+        if (!refused && driveDocumentKind(fresh.markdown) === 'base') {
+          const rows = readDriveCollectionRows(fresh.markdown)
+          setCollectionRows((prev) => ({ ...prev, [activeDocId]: rows }))
+          const previousBody = docsRef.current.find((doc) => doc.id === activeDocId)?.markdown ?? ''
+          if (JSON.stringify(readDriveCollectionRows(previousBody)) !== JSON.stringify(rows))
+            setBodyReloadEpochs((prev) =>
+              withNewestEntry(
+                prev,
+                activeDocId,
+                (prev.get(activeDocId) ?? 0) + 1,
+                MAX_TRACKED_DOCUMENTS
+              )
+            )
+        }
         if (etag && !refused) etagsRef.current.set(activeDocId, etag)
         setInternalDocs((prev) =>
-          prev.map((d) =>
+          (prev.some((doc) => doc.id === activeDocId) ? prev : [...prev, fresh]).map((d) =>
             d.id === activeDocId
               ? {
                   ...d,
@@ -524,8 +790,9 @@ export function WorkspaceCollaborativeDocs({
           )
         )
       })
-      .catch(() => {
-        // Keep cached list entry if detail read fails transiently.
+      .catch((error: unknown) => {
+        if (!abort.signal.aborted && error instanceof ApiProblem && error.status === 404)
+          setUnavailableDocumentId(activeDocId)
       })
 
     void listWorkspaceDocumentBacklinks(organisationId, activeDocId, abort.signal)
@@ -542,13 +809,15 @@ export function WorkspaceCollaborativeDocs({
     return () => {
       abort.abort()
     }
-  }, [activeDocId, isRemoteMode, organisationId])
+  }, [detailDocumentId, detailRequestEpoch, isRemoteMode, organisationId])
 
   // Start & tear down Yjs CollabSessionController for the active document.
   useEffect(() => {
     if (!activeDocId || !activeDocRole) return
     const scopeKey = organisationId ?? 'local-workspace'
-    const initialBoundary = roomBoundaryRef.current
+    const initialBoundary = sessionBoundaryRef.current
+    const source = docsRef.current.find((doc) => doc.id === activeDocId)
+    const sourceStore = driveContext?.store
     const ctrl = new CollabSessionController({
       scopeKey,
       ...(confidential ? { confidential } : {}),
@@ -559,22 +828,37 @@ export function WorkspaceCollaborativeDocs({
         id: currentUser.id,
         name: currentUser.name,
       },
-      ...(isRemoteMode && organisationId
+      ...(isRemoteMode && organisationId && !activeDocId.startsWith('channel:')
         ? {
             fetchSession: () => createWorkspaceDocumentCollabSession(organisationId, activeDocId),
           }
         : {}),
       ...(webSocketFactory ? { webSocketFactory } : {}),
     })
-    controllerBridge.attach(ctrl)
+    controllerBridge.attach(ctrl, activeDocId)
     if (
       isRemoteMode &&
+      !activeDocId.startsWith('channel:') &&
       organisationId &&
       (Boolean(confidential) || initialBoundary === undefined || permitsPlaintext(initialBoundary))
     ) {
       void ctrl.connect()
     }
     return () => {
+      const boundary = source?.sourceRoomId
+        ? sourceStore?.getRoomBoundary?.(source.sourceRoomId)
+        : undefined
+      const context = driveContextRef.current
+      const channel = context?.channels.find((item) => item.id === source?.sourceChannelId)
+      if (
+        channel?.isConfidential ||
+        channel?.is_confidential ||
+        (source?.sourceChannelId &&
+          source.sourceChannelId === context?.activeChannelId &&
+          context?.isConfidential)
+      )
+        ctrl.setRoomBoundary('confidential-unavailable')
+      else if (boundary !== undefined && !permitsPlaintext(boundary)) ctrl.setRoomBoundary(boundary)
       controllerBridge.detach(ctrl)
       ctrl.destroy()
     }
@@ -585,31 +869,37 @@ export function WorkspaceCollaborativeDocs({
     confidential,
     currentUser.id,
     currentUser.name,
+    driveContext?.workspaceId,
+    driveContext?.store,
     isRemoteMode,
     organisationId,
     webSocketFactory,
   ])
 
-  const { controller: sessionController, session: collabSnapshot } = useSyncExternalStore(
+  const bridgeSnapshot = useSyncExternalStore(
     controllerBridge.subscribe,
     controllerBridge.getSnapshot
   )
+  const sessionController =
+    bridgeSnapshot.documentId === activeDocId ? bridgeSnapshot.controller : null
+  const collabSnapshot =
+    bridgeSnapshot.documentId === activeDocId ? bridgeSnapshot.session : IDLE_SESSION
 
   useLayoutEffect(() => {
     if (!sessionController) return
     const wasForbidden = sessionController.getSnapshot().status === 'forbidden'
-    sessionController.setRoomBoundary(roomBoundary)
+    sessionController.setRoomBoundary(sessionBoundary)
     if (
       wasForbidden &&
       isRemoteMode &&
       organisationId &&
       !confidential &&
-      (roomBoundary === undefined || permitsPlaintext(roomBoundary)) &&
+      (sessionBoundary === undefined || permitsPlaintext(sessionBoundary)) &&
       sessionController.getSnapshot().status !== 'forbidden'
     ) {
       void sessionController.connect()
     }
-  }, [confidential, isRemoteMode, organisationId, roomBoundary, sessionController])
+  }, [confidential, isRemoteMode, organisationId, sessionBoundary, sessionController])
 
   useEffect(() => {
     const scheduled = saveTimersRef.current
@@ -626,7 +916,9 @@ export function WorkspaceCollaborativeDocs({
   }, [])
 
   const effectiveRole: DocumentAccessRole =
+    plaintextBlocked ||
     currentDoc?.role === 'viewer' ||
+    Boolean(currentDoc?.sourceChannelId && !driveContext?.onUpdateChannelDocument) ||
     collabSnapshot.role === 'viewer' ||
     collabSnapshot.status === 'forbidden'
       ? 'viewer'
@@ -655,33 +947,16 @@ export function WorkspaceCollaborativeDocs({
       const fragment = ydoc.getXmlFragment('content')
       if (fragment.length === 0) return
       const serialized = tiptapDocToMarkdown(yXmlFragmentToProsemirrorJSON(fragment) as JSONContent)
-      if (isControlledLocal) {
-        const next = docsRef.current.map((d) => {
-          if (d.id !== activeDocId) return d
-          const nextMd =
-            explicitFolderIds.has(d.id) || isExplicitFolderMarkdown(d.markdown)
+      commitDocs((prev) =>
+        prev.map((doc) => {
+          if (doc.id !== activeDocId) return doc
+          const markdown =
+            explicitFolderIds.has(doc.id) || isExplicitFolderMarkdown(doc.markdown)
               ? ensureFolderMarker(serialized)
-              : serialized
-          return d.markdown === nextMd ? d : { ...d, markdown: nextMd }
+              : preserveDocumentKind(doc.markdown, serialized)
+          return doc.markdown === markdown ? doc : { ...doc, markdown }
         })
-        onLocalDocumentsChange?.(next)
-        return
-      }
-      setInternalDocs((prev) => {
-        let changed = false
-        const next = prev.map((d) => {
-          if (d.id !== activeDocId) return d
-          const nextMd =
-            explicitFolderIds.has(d.id) || isExplicitFolderMarkdown(d.markdown)
-              ? ensureFolderMarker(serialized)
-              : serialized
-          if (d.markdown === nextMd) return d
-          changed = true
-          return { ...d, markdown: nextMd }
-        })
-        if (changed) onDocumentsLoadedRef.current?.(next)
-        return changed ? next : prev
-      })
+      )
     }
     if (collabSnapshot.status === 'synced') {
       applyFromYdoc()
@@ -697,6 +972,7 @@ export function WorkspaceCollaborativeDocs({
     }
   }, [
     activeDocId,
+    commitDocs,
     collabSnapshot.status,
     editorSurface,
     explicitFolderIds,
@@ -706,6 +982,19 @@ export function WorkspaceCollaborativeDocs({
   ])
 
   const selectDocument = (id: string) => {
+    // A Drive reset can retain the same first-item fallback; every explicit open revalidates it.
+    setDetailRequestEpoch((epoch) => epoch + 1)
+    const target = docsRef.current.find((doc) => doc.id === id)
+    const kind = driveDocumentKind(target?.markdown ?? '')
+    setEditorSurface(
+      kind === 'base'
+        ? 'collections'
+        : kind === 'whiteboard'
+          ? 'whiteboard'
+          : editorSurface === 'markdown'
+            ? 'markdown'
+            : 'blocks'
+    )
     setSelectedId(id)
     setTreeError(null)
     setDraftCopiedTo(null)
@@ -727,7 +1016,150 @@ export function WorkspaceCollaborativeDocs({
     }
   }
 
-  const handleCreatePage = async (parentId: string | null, openInEditor = false) => {
+  const inFlightCreationRef = useRef(new Set<string>())
+  const mountedRef = useRef(true)
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+  const createTypedDocument = async (title: string, parentId: string | null, markdown: string) => {
+    if (!organisationId || !permitsRemoteBodyWrite()) throw new Error('The room is protected')
+    const storageKey = 'kodera.docs.pending-typed-creation'
+    const kind = isExplicitFolderMarkdown(markdown) ? 'folder' : driveDocumentKind(markdown)
+    const key = JSON.stringify([
+      organisationId,
+      driveContext?.workspaceId ?? 'workspace',
+      parentId ?? 'root',
+      kind,
+      ...(kind === 'folder' ? [title] : []),
+    ])
+    const inFlight = inFlightTypedCreations.get(key)
+    if (inFlight) {
+      inFlight.participants.add(() => mountedRef.current && permitsRemoteBodyWrite())
+      const existing = await inFlight.promise
+      if (!mountedRef.current || !permitsRemoteBodyWrite()) throw new Error(driveCopy.shareRefused)
+      return existing
+    }
+    const participants = new Set([() => mountedRef.current && permitsRemoteBodyWrite()])
+    const permitsSharedWrite = () => [...participants].some((permitsWrite) => permitsWrite())
+    const creation = (async () => {
+      const readPendingCreations = () => {
+        let restored: ReadonlyMap<string, string> = new Map(pendingTypedCreations)
+        try {
+          const stored: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '[]')
+          if (Array.isArray(stored)) {
+            const entries = new Map<string, string>()
+            for (const entry of stored.slice(-MAX_TRACKED_DOCUMENTS)) {
+              if (
+                Array.isArray(entry) &&
+                typeof entry[0] === 'string' &&
+                typeof entry[1] === 'string'
+              ) {
+                entries.set(entry[0], entry[1])
+              }
+            }
+            restored = entries
+          }
+        } catch {
+          // Restricted session storage still permits in-memory retries.
+        }
+        // Merge only failed storage writes; old snapshots must not resurrect another mount's deletions.
+        for (const [intent, { docId, remove }] of unpersistedTypedCreations) {
+          if (!remove) restored = withNewestEntry(restored, intent, docId, MAX_TRACKED_DOCUMENTS)
+          else if (restored.get(intent) === docId) restored = withoutEntry(restored, intent)
+        }
+        pendingTypedCreations = restored
+        return restored
+      }
+      const pendingCreations = readPendingCreations()
+      const pendingId = pendingCreations.get(key)
+      const trackedIntents = new Set([
+        ...pendingCreations.keys(),
+        ...unpersistedTypedCreations.keys(),
+        ...inFlightTypedCreations.keys(),
+      ])
+      if (!trackedIntents.has(key) && trackedIntents.size >= MAX_TRACKED_DOCUMENTS)
+        throw new Error('Pending document creations must be resolved before creating another')
+      const rememberPending = (docId: string | null, expectedDocId = docId) => {
+        if (docId === null && unpersistedTypedCreations.get(key)?.docId === expectedDocId)
+          unpersistedTypedCreations.delete(key)
+        const next = new Map(readPendingCreations())
+        if (docId) next.set(key, docId)
+        else if (expectedDocId && next.get(key) === expectedDocId) next.delete(key)
+        else return
+        pendingTypedCreations = next
+        try {
+          // Persist a bounded map of intents and IDs, without document bodies or generated titles.
+          if (next.size > 0) sessionStorage.setItem(storageKey, JSON.stringify([...next]))
+          else sessionStorage.removeItem(storageKey)
+          unpersistedTypedCreations.clear()
+        } catch {
+          // Retain the in-memory IDs if session storage is unavailable.
+          unpersistedTypedCreations.set(key, {
+            docId: (docId ?? expectedDocId)!,
+            remove: docId === null,
+          })
+        }
+      }
+      const readPending = async (docId: string) => {
+        try {
+          return await getWorkspaceDocument(organisationId, docId)
+        } catch (error) {
+          if (error instanceof ApiProblem && error.status === 404) rememberPending(null, docId)
+          throw error
+        }
+      }
+      let pending = pendingId
+        ? await readPending(pendingId)
+        : await createWorkspaceDocument(organisationId, { title, parentId })
+      rememberPending(pending.document.id)
+      if (!permitsSharedWrite()) throw new Error('The room is protected')
+      const hasPersistedKind = (body: string) =>
+        isExplicitFolderMarkdown(markdown)
+          ? isExplicitFolderMarkdown(body)
+          : driveDocumentKind(body) === driveDocumentKind(markdown)
+      if (hasPersistedKind(pending.document.markdown)) {
+        return {
+          result: pending,
+          acknowledge: () => rememberPending(null, pending.document.id),
+        }
+      }
+      if (!pending.etag) {
+        pending = await readPending(pending.document.id)
+        rememberPending(pending.document.id)
+      }
+      const version = pending.etag
+      if (!version) throw new Error('A version is required to persist the document kind')
+      if (!permitsSharedWrite()) throw new Error('The room is protected')
+      const saved = await updateWorkspaceDocument(organisationId, pending.document.id, version, {
+        markdown: isExplicitFolderMarkdown(markdown)
+          ? ensureFolderMarker(pending.document.markdown)
+          : ensureDriveKindMarker(pending.document.markdown, driveDocumentKind(markdown)),
+      })
+      if (!hasPersistedKind(saved.document.markdown))
+        throw new Error('The document kind was not persisted')
+      return {
+        result: saved,
+        acknowledge: () => rememberPending(null, saved.document.id),
+      }
+    })().finally(() => {
+      inFlightTypedCreations.delete(key)
+    })
+    inFlightTypedCreations.set(key, { promise: creation, participants })
+    return creation
+  }
+
+  const handleCreatePage = async (
+    parentId: string | null,
+    openInEditor = true,
+    kind: DriveDocumentKind = 'page'
+  ) => {
+    if (plaintextBlocked) {
+      setTreeError(driveCopy.shareRefused)
+      return
+    }
     const depthCheck = canCreateDocumentUnderParent(docs, parentId)
     if (!depthCheck.ok) {
       setTreeError(t('console.docs.collab.error-max-depth'))
@@ -737,31 +1169,58 @@ export function WorkspaceCollaborativeDocs({
 
     const tpl = getDocumentStarterTemplate(templateKey, i18n.resolvedLanguage)
     const siblingCount = docs.filter((d) => d.parentId === parentId).length
-    const defaultTitle =
-      siblingCount > 0 ? `${tpl.defaultTitle} ${siblingCount + 1}` : tpl.defaultTitle
+    const kindTitle =
+      kind === 'base'
+        ? driveCopy.newBase
+        : kind === 'whiteboard'
+          ? driveCopy.newWhiteboard
+          : tpl.defaultTitle
+    const defaultTitle = siblingCount > 0 ? `${kindTitle} ${siblingCount + 1}` : kindTitle
+    const initialMarkdown = kind === 'page' ? tpl.markdown : `${DOCUMENT_KIND_MARKERS[kind]}\n`
+    const nextSurface =
+      kind === 'base' ? 'collections' : kind === 'whiteboard' ? 'whiteboard' : 'blocks'
 
     if (isRemoteMode && organisationId) {
+      const key = JSON.stringify([organisationId, driveContext?.workspaceId, parentId, kind])
+      if (inFlightCreationRef.current.has(key)) return
+      inFlightCreationRef.current.add(key)
       try {
-        const { document: created, etag } = await createWorkspaceDocument(organisationId, {
-          title: defaultTitle,
-          parentId,
-          ...(tpl.coreTemplateKey ? { templateKey: tpl.coreTemplateKey } : {}),
-        })
+        const { result, acknowledge } =
+          kind === 'page'
+            ? {
+                result: await createWorkspaceDocument(organisationId, {
+                  title: defaultTitle,
+                  parentId,
+                  ...(tpl.coreTemplateKey ? { templateKey: tpl.coreTemplateKey } : {}),
+                }),
+                acknowledge: undefined,
+              }
+            : await createTypedDocument(defaultTitle, parentId, initialMarkdown)
+        if (!mountedRef.current || !permitsRemoteBodyWrite()) {
+          setTreeError(driveCopy.shareRefused)
+          return
+        }
+        acknowledge?.()
+        const { document: created, etag } = result
         if (etag) etagsRef.current.set(created.id, etag)
         const record: WorkspacePageRecord = {
           id: created.id,
           parentId: created.parentId,
           title: created.title,
-          markdown: created.markdown || tpl.markdown,
+          markdown: kind === 'page' ? created.markdown || tpl.markdown : created.markdown,
           role: created.role,
           updatedAt: created.updatedAt,
           order: docs.length,
         }
-        commitDocs((prev) => [...prev, record])
+        commitDocs((prev) => [...prev.filter((doc) => doc.id !== record.id), record])
         selectDocument(record.id)
-        if (openInEditor) setEditorSurface('blocks')
+        if (openInEditor) setEditorSurface(nextSurface)
       } catch {
-        setTreeError(t('console.docs.collab.error-save'))
+        setTreeError(
+          permitsRemoteBodyWrite() ? t('console.docs.collab.error-save') : driveCopy.shareRefused
+        )
+      } finally {
+        inFlightCreationRef.current.delete(key)
       }
       return
     }
@@ -770,17 +1229,21 @@ export function WorkspaceCollaborativeDocs({
       id: crypto.randomUUID(),
       parentId,
       title: defaultTitle,
-      markdown: tpl.markdown,
+      markdown: initialMarkdown,
       role: 'editor',
       updatedAt: new Date().toISOString(),
       order: docs.length,
     }
     commitDocs((prev) => [...prev, created])
     selectDocument(created.id)
-    if (openInEditor) setEditorSurface('blocks')
+    if (openInEditor) setEditorSurface(nextSurface)
   }
 
   const handleCreateDriveFolder = async (rawTitle: string, parentId: string | null) => {
+    if (plaintextBlocked) {
+      setTreeError(driveCopy.shareRefused)
+      return
+    }
     const trimmed = rawTitle.trim()
     if (trimmed.length === 0 || trimmed.length > 120) return
     const depthCheck = canCreateDocumentUnderParent(docs, parentId)
@@ -792,38 +1255,35 @@ export function WorkspaceCollaborativeDocs({
     const folderMarkdown = `${FOLDER_MARKDOWN_MARKER}\n\n## ${trimmed}\n`
 
     if (isRemoteMode && organisationId) {
+      const key = JSON.stringify([organisationId, driveContext?.workspaceId, parentId, 'folder'])
+      if (inFlightCreationRef.current.has(key)) return
+      inFlightCreationRef.current.add(key)
       try {
-        const { document: created, etag } = await createWorkspaceDocument(organisationId, {
-          title: trimmed,
-          parentId,
-        })
-        let latestEtag = etag
-        let persistedMarkdown = folderMarkdown
-        if (!confidential?.required && latestEtag) {
-          const updated = await updateWorkspaceDocument(organisationId, created.id, latestEtag, {
-            markdown: folderMarkdown,
-          })
-          if (updated.etag) {
-            latestEtag = updated.etag
-          }
-          if (updated.document.markdown) {
-            persistedMarkdown = ensureFolderMarker(updated.document.markdown)
-          }
+        const { result, acknowledge } = await createTypedDocument(trimmed, parentId, folderMarkdown)
+        if (!mountedRef.current || !permitsRemoteBodyWrite()) {
+          setTreeError(driveCopy.shareRefused)
+          return
         }
-        if (latestEtag) etagsRef.current.set(created.id, latestEtag)
+        acknowledge()
+        const { document: created, etag } = result
+        if (etag) etagsRef.current.set(created.id, etag)
         setExplicitFolderIds((prev) => new Set([...prev, created.id]))
         const record: WorkspacePageRecord = {
           id: created.id,
           parentId: created.parentId,
           title: created.title,
-          markdown: persistedMarkdown,
+          markdown: created.markdown,
           role: created.role,
           updatedAt: created.updatedAt,
           order: docs.length,
         }
-        commitDocs((prev) => [...prev, record])
+        commitDocs((prev) => [...prev.filter((doc) => doc.id !== record.id), record])
       } catch {
-        setTreeError(t('console.docs.collab.error-save'))
+        setTreeError(
+          permitsRemoteBodyWrite() ? t('console.docs.collab.error-save') : driveCopy.shareRefused
+        )
+      } finally {
+        inFlightCreationRef.current.delete(key)
       }
       return
     }
@@ -845,6 +1305,9 @@ export function WorkspaceCollaborativeDocs({
   const handleCreateCollectionEntry = async (rawTitle: string): Promise<string | null> => {
     const trimmed = rawTitle.trim()
     if (trimmed.length === 0 || trimmed.length > 120) return null
+    if (plaintextBlocked) return null
+    const parentId =
+      currentDoc && driveDocumentKind(currentDoc.markdown) === 'base' ? currentDoc.id : null
     setTreeError(null)
     const tpl = getDocumentStarterTemplate('blank', i18n.resolvedLanguage)
 
@@ -852,7 +1315,7 @@ export function WorkspaceCollaborativeDocs({
       try {
         const { document: created, etag } = await createWorkspaceDocument(organisationId, {
           title: trimmed,
-          parentId: null,
+          parentId,
         })
         if (etag) etagsRef.current.set(created.id, etag)
         const record: WorkspacePageRecord = {
@@ -875,7 +1338,7 @@ export function WorkspaceCollaborativeDocs({
 
     const created: WorkspacePageRecord = {
       id: crypto.randomUUID(),
-      parentId: null,
+      parentId,
       title: trimmed,
       markdown: tpl.markdown,
       role: 'editor',
@@ -971,7 +1434,7 @@ export function WorkspaceCollaborativeDocs({
   }
 
   const scheduleRemotePatch = (docId: string, nextPatch: RemotePatch) => {
-    if (!isRemoteMode || !organisationId) return
+    if (!isRemoteMode || !organisationId || docId.startsWith('channel:')) return
     if (conflictsRef.current.get(docId)?.kind === 'version-conflict') {
       cancelScheduledSave(docId)
       return
@@ -1003,7 +1466,7 @@ export function WorkspaceCollaborativeDocs({
       const generation = supersedeWrites(docId)
       const { markdown, ...metadata } = patch
       const saveToken = Symbol(docId)
-      inFlightSavesRef.current.add(saveToken)
+      inFlightSavesRef.current.set(saveToken, docId)
       let save: ReturnType<typeof updateWorkspaceDocument>
       try {
         save =
@@ -1070,6 +1533,7 @@ export function WorkspaceCollaborativeDocs({
             : d
         )
       )
+      setCollectionRows((prev) => ({ ...prev, [docId]: readDriveCollectionRows(fresh.markdown) }))
       forgetConflict(docId)
       setTreeError(null)
       resetSeededBody(docId)
@@ -1143,7 +1607,10 @@ export function WorkspaceCollaborativeDocs({
 
   const handleBlockMarkdownChange = (nextMarkdown: string) => {
     if (!currentDoc || effectiveRole === 'viewer') return
-    const storedMarkdown = isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
+    const storedMarkdown = preserveDocumentKind(
+      currentDoc.markdown,
+      isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
+    )
     if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
@@ -1154,7 +1621,10 @@ export function WorkspaceCollaborativeDocs({
 
   const handleRawMarkdownChange = (nextMarkdown: string) => {
     if (!currentDoc || isMarkdownBodyReadOnly) return
-    const storedMarkdown = isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
+    const storedMarkdown = preserveDocumentKind(
+      currentDoc.markdown,
+      isCurrentExplicitFolder ? ensureFolderMarker(nextMarkdown) : nextMarkdown
+    )
     if (new TextEncoder().encode(storedMarkdown).length > 262_144) return
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: storedMarkdown } : d))
@@ -1285,120 +1755,340 @@ export function WorkspaceCollaborativeDocs({
     currentDoc !== undefined &&
     currentDoc.title.trim().length > 0
 
+  const offlineCacheReady =
+    !sessionController || collabSnapshot.offlineSynced || sessionController.offlineCacheReady
   const ydocForEditor = useMemo(() => {
     if (!sessionController) return undefined
+    if (!isRemoteMode && !offlineCacheReady) return undefined
     if (effectiveRole === 'viewer') {
       const hasContent = sessionController.ydoc.getXmlFragment('content').length > 0
       return hasContent || collabSnapshot.status === 'synced' ? sessionController.ydoc : undefined
     }
     return sessionController.ydoc
-  }, [collabSnapshot.status, effectiveRole, sessionController])
+  }, [collabSnapshot.status, offlineCacheReady, effectiveRole, isRemoteMode, sessionController])
 
   const bodyReloadEpoch = currentDoc ? (bodyReloadEpochs.get(currentDoc.id) ?? 0) : 0
   const blockEditorKey = currentDoc ? `${currentDoc.id}#${bodyReloadEpoch}` : ''
   const isSinglePageEditorSurface =
-    editorSurface === 'blocks' || editorSurface === 'markdown' || editorSurface === 'whiteboard'
+    editorSurface === 'blocks' ||
+    editorSurface === 'markdown' ||
+    editorSurface === 'whiteboard' ||
+    editorSurface === 'collections'
   const whiteboardTabLabel = i18n.resolvedLanguage === 'en' ? 'Whiteboard' : 'Tableau blanc'
   const isWhiteboardConfidentialBlocked =
+    plaintextBlocked ||
     collabSnapshot.status === 'forbidden' ||
     (roomBoundary !== undefined && !permitsPlaintext(roomBoundary) && !confidential)
 
-  const surfaceModes: readonly WorkspaceEditorSurface[] = currentDoc
-    ? ['drive', 'blocks', 'markdown', 'whiteboard', 'collections']
-    : ['drive', 'blocks', 'collections']
+  const surfaceModes: readonly WorkspaceEditorSurface[] =
+    currentDoc && isSinglePageEditorSurface && driveDocumentKind(currentDoc.markdown) === 'page'
+      ? ['blocks', 'markdown', 'whiteboard']
+      : []
+  const channelPages = entries.flatMap((entry): WorkspacePageRecord[] =>
+    entry.document
+      ? [
+          {
+            id: `channel:${entry.id}`,
+            parentId: CHANNEL_ATTACHMENTS_FOLDER_ID,
+            title: entry.name,
+            markdown: entry.document.content,
+            role: entry.document.role ?? 'editor',
+            updatedAt: '',
+          },
+        ]
+      : []
+  )
+  const virtualFolder: WorkspacePageRecord = {
+    id: CHANNEL_ATTACHMENTS_FOLDER_ID,
+    parentId: null,
+    title: driveCopy.attachmentsFolder,
+    markdown: FOLDER_MARKDOWN_MARKER,
+    role: 'viewer',
+    updatedAt: '',
+  }
+  const explorerDocs = [...ownedDocs, virtualFolder, ...channelPages]
+  const explorerTree = buildDocumentTree(explorerDocs)
+  const importChannelDocument = (document: ChannelDoc) => {
+    if (
+      plaintextBlocked ||
+      !entries.some(
+        (entry) => entry.document?.id === document.id && entry.channel.id === document.channelId
+      )
+    )
+      return
+    const id = document.id.startsWith('workspace-page:')
+      ? document.id.slice('workspace-page:'.length)
+      : `channel:${document.id}`
+    if (!docs.some((doc) => doc.id === id)) {
+      const record: WorkspacePageRecord = {
+        id,
+        sourceDocumentId: document.id,
+        sourceChannelId: document.channelId,
+        sourceRoomId: (() => {
+          const room = driveContext?.snapshot.channels.get(document.channelId)
+          return room?.state === 'resolved' ? room.roomId : undefined
+        })(),
+        parentId: null,
+        title: document.title,
+        markdown: document.content,
+        role: document.id.startsWith('workspace-page:') ? 'viewer' : (document.role ?? 'editor'),
+        updatedAt: '',
+      }
+      setImportedDocs((previous) => [...previous.filter((doc) => doc.id !== id), record])
+    }
+    setDetailRequestEpoch((epoch) => epoch + 1)
+    setSelectedId(id)
+    const kind = driveDocumentKind(document.content)
+    setEditorSurface(
+      kind === 'base' ? 'collections' : kind === 'whiteboard' ? 'whiteboard' : 'blocks'
+    )
+  }
+  const sharedDocumentId =
+    activeDocumentId ?? new URLSearchParams(window.location.search).get('document')
+  const request = driveContext?.requestedDocument
+  const [lastRequestedSequence, setLastRequestedSequence] = useState<number | undefined>()
+  const [lastSharedDocument, setLastSharedDocument] = useState<string | null>(null)
+  if (request && request.sequence !== lastRequestedSequence) {
+    setLastRequestedSequence(request.sequence)
+    const resolved = driveContext?.snapshot.channels.get(request.channelId)
+    const source = entries.find(
+      (entry) =>
+        entry.document?.id === request.id &&
+        (entry.channel.id === request.channelId || request.id.startsWith('workspace-page:'))
+    )
+    if (
+      !plaintextBlocked &&
+      resolved?.state === 'resolved' &&
+      resolved.roomId === request.roomId &&
+      driveContext?.activeChannelId === request.channelId &&
+      source?.document
+    )
+      importChannelDocument(source.document)
+  }
+  if (sharedDocumentId && sharedDocumentId !== lastSharedDocument) {
+    const source = entries.find(
+      (entry) => entry.document && `channel:${entry.document.id}` === sharedDocumentId
+    )
+    if (!plaintextBlocked && source?.document) {
+      setLastSharedDocument(sharedDocumentId)
+      importChannelDocument(source.document)
+    }
+  }
+  const onDocumentRequestHandled = driveContext?.onDocumentRequestHandled
+  useEffect(() => {
+    if (lastRequestedSequence !== undefined) onDocumentRequestHandled?.(lastRequestedSequence)
+  }, [lastRequestedSequence, onDocumentRequestHandled])
+  const currentKind = driveDocumentKind(currentDoc?.markdown ?? '')
+  const isBaseCollection = currentKind === 'base' && editorSurface !== 'core-collections'
+  const collectionDocumentId = currentDoc?.id
+  const collectionDocumentTitle = currentDoc?.title
+  const collectionTitle = collectionDocumentTitle ?? driveCopy.modeBase
+  const collectionLanguage = i18n.resolvedLanguage
+  const currentCollection = {
+    ...createDefaultCollectionSchema(collectionLanguage),
+    id: collectionDocumentId ?? 'local-drive',
+    title: collectionTitle,
+  }
+  const canPublish = Boolean(
+    onPublishToChannel || (driveContext?.activeChannelId && driveContext.store.publishDocument)
+  )
+  async function publishDocument() {
+    if (!currentDoc || plaintextBlocked || publishing) return
+    setPublishing(true)
+    try {
+      if (onPublishToChannel) await onPublishToChannel(currentDoc)
+      else if (driveContext?.activeChannelId) {
+        const state = driveContext.store.getSnapshot().channels.get(driveContext.activeChannelId)
+        if (state?.state !== 'resolved') throw new Error('The channel is unavailable')
+        const boundary = driveContext.store.getRoomBoundary?.(state.roomId)
+        if (boundary !== undefined && !permitsPlaintext(boundary))
+          throw new Error('The channel is protected')
+        await driveContext.store.publishDocument?.(state.roomId, {
+          id: currentDoc.id.startsWith('channel:')
+            ? currentDoc.id.slice(8)
+            : `workspace-page:${currentDoc.id}`,
+          channelId: driveContext.activeChannelId,
+          title: currentDoc.title,
+          content: currentDoc.markdown,
+        })
+      }
+      setPublishFeedback(driveCopy.published)
+    } catch {
+      setPublishFeedback(driveCopy.publishFailed)
+    } finally {
+      setPublishing(false)
+    }
+  }
+  const uploadSlot =
+    driveContext && !plaintextBlocked ? (
+      <FilesUpload
+        store={driveContext.store}
+        snapshot={driveContext.snapshot}
+        channels={driveContext.channels}
+        activeChannelId={driveContext.activeChannelId}
+      >
+        {({ trigger, controls }) => (
+          <div className="flex flex-col gap-3 rounded-lg border border-dashed border-c-border-input bg-c-sunken p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-c-ink-3">
+              <span>{driveCopy.dropFiles}</span>
+              {trigger}
+            </div>
+            {controls}
+          </div>
+        )}
+      </FilesUpload>
+    ) : undefined
 
   return (
     <div
       data-testid="workspace-collaborative-docs"
       className="flex min-h-0 flex-1 gap-4 narrow:flex-col"
     >
-      <aside
-        aria-label={t('console.docs.collab.tree-title')}
-        className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 rounded-md border border-c-border-soft bg-c-sunken p-3 narrow:w-full"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-c-ink">
-            {t('console.docs.collab.tree-title')}
-          </h2>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor={templateSelectId} className="sr-only">
-            {t('console.docs.collab.action-new-page')}
-          </label>
-          <select
-            id={templateSelectId}
-            data-testid="docs-template-select"
-            value={templateKey}
-            onChange={(event) => setTemplateKey(event.target.value as DocumentTemplateKey)}
-            className="h-8 rounded-md border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-          >
-            {ALL_STARTER_TEMPLATE_KEYS.map((key) => (
-              <option key={key} value={key}>
-                {templateOptionLabel(key)}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" onClick={() => void handleCreatePage(null)}>
-              {t('console.docs.collab.action-new-page')}
+      {treeOpen ? (
+        <aside
+          aria-label={driveCopy.treeTitle}
+          className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 rounded-md border border-c-border-soft bg-c-sunken p-3 narrow:w-full"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-c-ink">{driveCopy.treeTitle}</h2>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label={driveCopy.collapseTree}
+              onClick={() => setTreeOpen(false)}
+            >
+              <KoderaIcon name="left" />
             </Button>
-            {currentDoc && effectiveRole === 'editor' ? (
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor={templateSelectId} className="sr-only">
+              {t('console.docs.collab.action-new-page')}
+            </label>
+            <select
+              id={templateSelectId}
+              data-testid="docs-template-select"
+              value={templateKey}
+              onChange={(event) => setTemplateKey(event.target.value as DocumentTemplateKey)}
+              className="h-8 rounded-md border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+            >
+              {ALL_STARTER_TEMPLATE_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {templateOptionLabel(key)}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => void handleCreatePage(currentDoc.id)}
+                disabled={plaintextBlocked}
+                onClick={() =>
+                  void handleCreatePage(
+                    driveFolderId === CHANNEL_ATTACHMENTS_FOLDER_ID ? null : driveFolderId
+                  )
+                }
               >
-                {t('console.docs.collab.action-new-subpage')}
+                {t('console.docs.collab.action-new-page')}
               </Button>
-            ) : null}
+              {currentDoc && effectiveRole === 'editor' ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void handleCreatePage(currentDoc.id)}
+                >
+                  {t('console.docs.collab.action-new-subpage')}
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
 
-        {treeNodes.length === 0 ? (
-          <p className="text-xs text-c-ink-3">{t('console.docs.collab.empty-workspace')}</p>
-        ) : (
-          <nav aria-label={t('console.docs.collab.tree-title')} className="overflow-y-auto">
-            <ul className="flex flex-col gap-1">
-              {treeNodes.map((node) => {
-                const isSelected = node.doc.id === currentDoc?.id && isSinglePageEditorSurface
-                return (
-                  <li key={node.doc.id}>
-                    <button
-                      type="button"
-                      data-testid={`docs-tree-item-${node.doc.id}`}
-                      data-depth={node.depth}
-                      aria-current={isSelected ? 'page' : undefined}
-                      onClick={() => {
-                        selectDocument(node.doc.id)
-                        if (!isSinglePageEditorSurface) {
-                          setEditorSurface('blocks')
-                        }
-                      }}
-                      className={cx(
-                        'flex min-h-8 w-full items-center justify-between gap-2 rounded-md py-1 pr-2 text-left text-xs focus-visible:ring focus-visible:outline-hidden',
-                        TOUCH_TARGET,
-                        treeIndentClass(node.depth),
-                        isSelected
-                          ? 'bg-c-accent-soft font-semibold text-c-accent-ink'
-                          : 'font-medium text-c-ink hover:bg-c-muted'
-                      )}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{node.doc.title}</span>
-                      {node.depth > 1 ? (
-                        <span className="shrink-0 font-mono text-xs text-c-ink-3">
-                          L{node.depth}
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </nav>
-        )}
-      </aside>
+          <Button
+            data-testid="docs-surface-drive"
+            size="sm"
+            variant="secondary"
+            aria-current={editorSurface === 'drive' && driveFolderId === null ? 'page' : undefined}
+            onClick={() => {
+              resetDriveRoot()
+            }}
+          >
+            <KoderaIcon name="drive" />
+            {driveCopy.driveRoot}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-current={
+              editorSurface === 'drive' && driveFolderId === CHANNEL_ATTACHMENTS_FOLDER_ID
+                ? 'page'
+                : undefined
+            }
+            onClick={() => {
+              setDriveFolderId(CHANNEL_ATTACHMENTS_FOLDER_ID)
+              setEditorSurface('drive')
+            }}
+          >
+            <KoderaIcon name="files" />
+            {driveCopy.attachmentsFolder}
+          </Button>
+          {treeNodes.length === 0 ? (
+            selectedId ? null : (
+              <p className="text-xs text-c-ink-3">{t('console.docs.collab.empty-workspace')}</p>
+            )
+          ) : (
+            <nav aria-label={driveCopy.treeTitle} className="overflow-y-auto">
+              <ul className="flex flex-col gap-1">
+                {treeNodes.map((node) => {
+                  const isSelected = node.doc.id === currentDoc?.id && isSinglePageEditorSurface
+                  return (
+                    <li key={node.doc.id}>
+                      <button
+                        type="button"
+                        data-testid={`docs-tree-item-${node.doc.id}`}
+                        data-depth={node.depth}
+                        aria-current={isSelected ? 'page' : undefined}
+                        onClick={() => {
+                          if (isExplicitFolderMarkdown(node.doc.markdown)) {
+                            setDriveFolderId(node.doc.id)
+                            setEditorSurface('drive')
+                          } else selectDocument(node.doc.id)
+                        }}
+                        className={cx(
+                          'flex min-h-8 w-full items-center justify-between gap-2 rounded-md py-1 pr-2 text-left text-xs focus-visible:ring focus-visible:outline-hidden',
+                          TOUCH_TARGET,
+                          treeIndentClass(node.depth),
+                          isSelected
+                            ? 'bg-c-accent-soft font-semibold text-c-accent-ink'
+                            : 'font-medium text-c-ink hover:bg-c-muted'
+                        )}
+                      >
+                        <KoderaIcon
+                          name={
+                            isExplicitFolderMarkdown(node.doc.markdown)
+                              ? 'files'
+                              : driveDocumentKind(node.doc.markdown) === 'base'
+                                ? 'grid'
+                                : driveDocumentKind(node.doc.markdown) === 'whiteboard'
+                                  ? 'workspace'
+                                  : 'docs'
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate">{node.doc.title}</span>
+                        {node.depth > 1 ? (
+                          <span className="shrink-0 font-mono text-xs text-c-ink-3">
+                            L{node.depth}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </nav>
+          )}
+        </aside>
+      ) : null}
 
       <div
         ref={editorRegionRef}
@@ -1454,6 +2144,54 @@ export function WorkspaceCollaborativeDocs({
 
         {/* Top Surface Switcher + Document Header */}
         <header className="flex flex-col gap-3 border-b border-c-border-soft pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {!treeOpen ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={driveCopy.expandTree}
+                  onClick={() => setTreeOpen(true)}
+                >
+                  <KoderaIcon name="list" />
+                </Button>
+              ) : null}
+              <h1
+                tabIndex={-1}
+                className="flex items-center gap-2 text-md font-semibold text-c-ink"
+              >
+                <KoderaIcon name="drive" />
+                {driveCopy.workspaceTitle}
+              </h1>
+              <span className="rounded-full bg-c-muted px-2 py-1 text-xs text-c-ink-2">
+                {editorSurface === 'drive'
+                  ? driveCopy.modeDrive
+                  : editorSurface === 'collections'
+                    ? driveCopy.modeBase
+                    : editorSurface === 'whiteboard'
+                      ? driveCopy.modeWhiteboard
+                      : driveCopy.modeEditor}
+              </span>
+              {plaintextBlocked ? (
+                <span className="rounded-full bg-c-warn-soft px-2 py-1 text-xs text-c-warn-ink">
+                  {driveCopy.confidentialRoom}
+                </span>
+              ) : null}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setShareFeedback('')
+                setShareOpen(true)
+              }}
+            >
+              {driveCopy.share}
+            </Button>
+          </div>
+          {plaintextBlocked ? (
+            <p className="text-xs text-c-warn-ink">{driveCopy.confidentialNotice}</p>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-2">
             {currentDoc && isSinglePageEditorSurface ? (
               <div className="flex flex-wrap items-center gap-3">
@@ -1467,8 +2205,7 @@ export function WorkspaceCollaborativeDocs({
                     type="button"
                     data-testid="docs-breadcrumb-drive-root"
                     onClick={() => {
-                      setDriveFolderId(null)
-                      setEditorSurface('drive')
+                      resetDriveRoot()
                     }}
                     className={cx(
                       'inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 font-medium text-c-ink-2 hover:bg-c-muted hover:text-c-ink focus-visible:ring focus-visible:outline-hidden',
@@ -1579,6 +2316,16 @@ export function WorkspaceCollaborativeDocs({
                 ))}
               </div>
 
+              {currentDoc && isSinglePageEditorSurface && canPublish ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={plaintextBlocked || publishing || effectiveRole === 'viewer'}
+                  onClick={() => void publishDocument()}
+                >
+                  {driveCopy.publish}
+                </Button>
+              ) : null}
               {currentDoc && isSinglePageEditorSurface ? (
                 <div className="flex items-center gap-1">
                   <button
@@ -1701,25 +2448,113 @@ export function WorkspaceCollaborativeDocs({
           ) : null}
         </header>
 
+        {publishFeedback ? (
+          <p role="status" className="text-xs text-c-ink-2">
+            {publishFeedback}
+          </p>
+        ) : null}
+        <Dialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title={driveCopy.share}
+          closeLabel={driveCopy.close}
+        >
+          <div className="flex flex-col gap-4 text-sm text-c-ink-2">
+            <p>{currentDoc?.title ?? driveCopy.driveRoot}</p>
+            <p>{effectiveRole === 'viewer' ? driveCopy.roleViewer : driveCopy.roleEditor}</p>
+            <p>{driveCopy.inheritance}</p>
+            <p>{driveCopy.shareAccess}</p>
+            {plaintextBlocked ? (
+              <p role="alert" className="text-c-warn-ink">
+                {driveCopy.shareRefused}
+              </p>
+            ) : null}
+            <Button
+              disabled={plaintextBlocked || !currentDoc}
+              onClick={() => {
+                if (plaintextBlocked || !currentDoc) return
+                const link = new URL(window.location.href)
+                link.searchParams.set('document', currentDoc.id)
+                if (!navigator.clipboard) {
+                  setShareFeedback(driveCopy.copyFailed)
+                  return
+                }
+                void navigator.clipboard
+                  .writeText(link.href)
+                  .then(() => setShareFeedback(driveCopy.linkCopied))
+                  .catch(() => setShareFeedback(driveCopy.copyFailed))
+              }}
+            >
+              {driveCopy.copyInternalLink}
+            </Button>
+            <p role="status">{shareFeedback}</p>
+          </div>
+        </Dialog>
+        {selectedFileId && driveContext ? (
+          <Suspense fallback={null}>
+            <LazyFileLightboxModal
+              entries={entries.filter((entry) => !entry.document)}
+              selectedId={selectedFileId}
+              onSelect={setSelectedFileId}
+              onClose={() => setSelectedFileId(null)}
+              returnFocusTo={lightboxReturnFocus}
+              onOpenChannel={(entry) => {
+                setSelectedFileId(null)
+                if (entry.directRoomId) driveContext.onOpenDirect(entry.directRoomId)
+                else driveContext.onOpenChannel(entry.channel.id)
+              }}
+            />
+          </Suspense>
+        ) : null}
         {/* Active Surface Body */}
-        {editorSurface === 'drive' ? (
+        {editorSurface !== 'drive' && selectedId && unavailableDocumentId === selectedId ? (
+          <p role="alert" className="py-8 text-center text-sm text-c-ink-3">
+            {driveCopy.documentUnavailable}
+          </p>
+        ) : editorSurface === 'drive' ? (
           <DocsDriveExplorer
-            documents={docs}
-            treeNodes={treeNodes}
+            documents={explorerDocs}
+            treeNodes={explorerTree}
             explicitFolderIds={explicitFolderIds}
             activeFolderId={driveFolderId}
             onNavigateFolder={(folderId) => setDriveFolderId(folderId)}
             onOpenDocument={(docId, parentFolderId) => {
               setDriveFolderId(parentFolderId)
-              selectDocument(docId)
-              setEditorSurface('blocks')
+              const entry = entries.find((entry) => `channel:${entry.id}` === docId)
+              if (entry?.document) importChannelDocument(entry.document)
+              else selectDocument(docId)
             }}
             onCreateFolder={handleCreateDriveFolder}
             onCreateDocumentInFolder={(parentId) => handleCreatePage(parentId, true)}
-            canEdit={effectiveRole === 'editor'}
-            files={workspaceFiles}
+            canEdit={
+              !plaintextBlocked &&
+              (driveFolderId === null || docById.get(driveFolderId)?.role !== 'viewer') &&
+              driveFolderId !== CHANNEL_ATTACHMENTS_FOLDER_ID
+            }
+            onCreateKind={(kind, parentId) => handleCreatePage(parentId, true, kind)}
+            uploadSlot={uploadSlot}
+            onUploadFiles={plaintextBlocked ? undefined : onUploadFiles}
+            onOpenFile={(file) => {
+              if (!entries.some((entry) => entry.id === file.id)) return
+              lightboxReturnFocus.current =
+                document.activeElement instanceof HTMLElement ? document.activeElement : null
+              setSelectedFileId(file.id)
+            }}
+            files={[
+              ...workspaceFiles,
+              ...entries
+                .filter((entry) => !entry.document)
+                .map((entry) => ({
+                  id: entry.id,
+                  name: entry.name,
+                  previewable: true,
+                  sizeBytes: entry.sizeBytes,
+                  updatedAt: new Date(entry.ts).toISOString(),
+                  folderId: CHANNEL_ATTACHMENTS_FOLDER_ID,
+                })),
+            ]}
           />
-        ) : editorSurface === 'collections' ? (
+        ) : editorSurface === 'collections' || editorSurface === 'core-collections' ? (
           <Suspense
             fallback={
               <p role="status" className="py-4 text-xs text-c-ink-3">
@@ -1728,21 +2563,62 @@ export function WorkspaceCollaborativeDocs({
             }
           >
             <LazyDocsCollectionView
-              organisationId={isRemoteMode ? organisationId : undefined}
-              documents={docs.map((d) => ({
-                id: d.id,
-                title: d.title,
-                updatedAt: d.updatedAt,
-                role: d.role,
-              }))}
+              key={`${blockEditorKey}:${isBaseCollection ? 'base' : 'core-collections'}`}
+              organisationId={
+                isRemoteMode && !plaintextBlocked && !isBaseCollection ? organisationId : undefined
+              }
+              initialCollection={isBaseCollection ? currentCollection : undefined}
+              initialRows={
+                isBaseCollection && currentDoc
+                  ? (collectionRows[currentDoc.id] ?? readDriveCollectionRows(currentDoc.markdown))
+                  : undefined
+              }
+              validateRows={
+                isBaseCollection && currentDoc
+                  ? (rows) => {
+                      try {
+                        writeDriveCollectionRows(currentDoc.markdown, rows)
+                        return true
+                      } catch {
+                        return false
+                      }
+                    }
+                  : undefined
+              }
+              onRowsChange={
+                isBaseCollection
+                  ? (rows) => {
+                      if (!currentDoc || plaintextBlocked) return
+                      const markdown = writeDriveCollectionRows(currentDoc.markdown, rows)
+                      setCollectionRows((prev) => ({ ...prev, [currentDoc.id]: rows }))
+                      commitDocs((prev) =>
+                        prev.map((doc) => (doc.id === currentDoc.id ? { ...doc, markdown } : doc))
+                      )
+                      scheduleRemotePatch(currentDoc.id, { markdown })
+                    }
+                  : undefined
+              }
+              documents={docs
+                .filter(
+                  (doc) =>
+                    !isBaseCollection ||
+                    (doc.parentId === currentDoc?.id &&
+                      driveDocumentKind(doc.markdown) === 'page' &&
+                      !isExplicitFolderMarkdown(doc.markdown))
+                )
+                .map((d) => ({
+                  id: d.id,
+                  title: d.title,
+                  updatedAt: d.updatedAt,
+                  role: d.role,
+                }))}
               members={effectiveMembers}
               activeDocumentId={currentDoc?.id}
-              accessRole={currentDoc ? effectiveRole : 'editor'}
+              accessRole={plaintextBlocked ? 'viewer' : currentDoc ? effectiveRole : 'editor'}
               onOpenDocument={(docId) => {
                 selectDocument(docId)
-                setEditorSurface('blocks')
               }}
-              onCreateDocument={handleCreateCollectionEntry}
+              onCreateDocument={plaintextBlocked ? undefined : handleCreateCollectionEntry}
             />
           </Suspense>
         ) : currentDoc && currentNode ? (
@@ -1756,8 +2632,10 @@ export function WorkspaceCollaborativeDocs({
                   onMarkdownChange={handleBlockMarkdownChange}
                   role={effectiveRole}
                   ydoc={ydocForEditor}
-                  seedMarkdown={canSeedRestMarkdown}
-                  replacesSeededBody={bodyReloadEpoch > 0}
+                  seedMarkdown={
+                    canSeedRestMarkdown && (sessionController?.offlineCacheReady ?? true)
+                  }
+                  replacesSeededBody={bodyReloadEpoch > 0 || !isRemoteMode}
                   peers={collabSnapshot.peers}
                   onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
                   availablePages={docs.map((d) => ({
@@ -1803,7 +2681,7 @@ export function WorkspaceCollaborativeDocs({
                       {t('console.docs.collab.status-readonly')}
                     </InlineAlert>
                   </div>
-                ) : (
+                ) : sessionController ? (
                   <Suspense
                     fallback={
                       <p role="status" className="py-4 text-xs text-c-ink-3">
@@ -1813,14 +2691,14 @@ export function WorkspaceCollaborativeDocs({
                   >
                     <LazyWhiteboardCanvas
                       key={currentDoc.id}
-                      doc={ydocForEditor ?? sessionController?.ydoc}
+                      doc={sessionController.ydoc}
                       awareness={sessionController?.awareness}
                       participantId={currentUser.id}
                       participantName={currentUser.name}
                       readOnly={effectiveRole === 'viewer'}
                     />
                   </Suspense>
-                )
+                ) : null
               ) : (
                 <div className="w-full rounded-xl bg-c-page px-4 py-6 narrow:px-2 narrow:py-3">
                   <div className="mx-auto flex w-full max-w-[820px] flex-col gap-4 rounded-xl border border-c-border bg-c-surface p-8 shadow-card narrow:p-4">
@@ -1900,7 +2778,11 @@ export function WorkspaceCollaborativeDocs({
           </div>
         ) : (
           <p className="py-8 text-center text-sm text-c-ink-3">
-            {t('console.docs.collab.empty-workspace')}
+            {selectedId
+              ? !isRemoteMode || unavailableDocumentId === selectedId
+                ? driveCopy.documentUnavailable
+                : t('console.docs.collab.editor-loading')
+              : t('console.docs.collab.empty-workspace')}
           </p>
         )}
       </div>

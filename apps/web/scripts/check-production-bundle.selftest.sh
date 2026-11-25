@@ -28,6 +28,18 @@ if ! "$check" "$tmp/oidc" >"$tmp/oidc.log" 2>&1; then
   fail "a production (VITE_AUTH_MODE=oidc VITE_ENABLE_MSW=0) build was rejected"
 fi
 grep -q "OK" "$tmp/oidc.log" || fail "the production build did not report OK"
+# JS assets are UTF-8 even when the runner's default codec is ASCII or cp1252.
+printf 'void "\xe2\x86\x90";\n' > "$tmp/oidc/assets/utf8-regression.js"
+if ! LC_ALL=C PYTHONCOERCECLOCALE=0 PYTHONUTF8=0 "$check" --scan-only "$tmp/oidc" >"$tmp/utf8.log" 2>&1; then
+  cat "$tmp/utf8.log" >&2
+  fail "UTF-8 assets must scan under an ASCII default locale"
+fi
+rm "$tmp/oidc/assets/utf8-regression.js"
+python3 -c 'import ast, pathlib, re, sys
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+blocks = re.findall(r"<<[^\n]*?\bPY[^\n]*\n(.*?)^PY$", source, re.S | re.M)
+calls = [n for block in blocks for n in ast.walk(ast.parse(block)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "read_text"]
+assert calls and all(any(k.arg == "encoding" for k in n.keywords) for n in calls), "read_text requires explicit encoding"' "$check"
 # Round 3: msw's service worker script must not reach the dist root of a
 # production build (it used to, unconditionally, via `public/` — see
 # vite.config.ts's `mockServiceWorkerPlugin`).

@@ -101,6 +101,7 @@ export function createLocalWorkspaceStore(
       : [],
     selectedByChannel: initialChannel ? { [initialChannel.id]: `review-${initialChannel.id}` } : {},
   }
+  const channelMetadata = new Map(everyChannel(workspace).map((channel) => [channel.id, channel]))
   const rooms: RoomSummary[] = everyChannel(workspace)
     .filter((channel) => channel.room_state === 'ready')
     .map((channel) => {
@@ -211,6 +212,16 @@ export function createLocalWorkspaceStore(
   }
   return {
     simulation: true,
+    getRoomBoundary: (roomId) => {
+      const channelId = [...channels].find(([, value]) => value.roomId === roomId)?.[0]
+      const channel = channelId ? channelMetadata.get(channelId) : undefined
+      if (!channel) return 'unknown'
+      const flags = channel as WorkspaceChannel & {
+        isConfidential?: boolean
+        is_confidential?: boolean
+      }
+      return flags.isConfidential || flags.is_confidential ? 'confidential-unavailable' : 'ordinary'
+    },
     getInitialDocuments: () => initialDocs,
     async publishDocument(roomId, doc) {
       if (!timelines.has(roomId)) throw new Error('Unknown channel')
@@ -231,6 +242,7 @@ export function createLocalWorkspaceStore(
       members.slice(0, 3).map((member) => member.userId)
     ),
     addChannel(channel) {
+      channelMetadata.set(channel.id, channel)
       if (channels.has(channel.id)) return
       if (channel.room_state !== 'ready')
         throw new Error('Only ready channels can be added locally')

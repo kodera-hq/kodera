@@ -95,24 +95,19 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
 }, info) => {
   await page.goto('/community/workspace')
   await expect(page.getByRole('heading', { name: 'arrivals', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Docs', exact: true }).click()
+  await page.getByRole('button', { name: 'Drive & Docs', exact: true }).click()
   await expect(page.getByTestId('espace-inline-docs-canvas')).toBeVisible()
   await expect(
     page.getByText('Cette page n’est pas encore disponible', { exact: false })
   ).toHaveCount(0)
-  await page.getByRole('button', { name: 'Fichiers', exact: true }).click()
-  const files = page.getByRole('region', { name: 'Fichiers de l’espace', exact: true })
+  const files = page.getByTestId('docs-drive-explorer')
+  await files.getByTestId('drive-open-folder-virtual:channel-attachments').click()
   await expect(files).toBeVisible()
   await expect(
-    files.getByRole('textbox', { name: 'Rechercher un fichier', exact: true })
+    files.getByRole('searchbox', { name: 'Rechercher dans Drive', exact: true })
   ).toBeVisible()
-  await expect(files.getByRole('button', { name: 'Images', exact: true })).toBeVisible()
-  const firstCard = files.locator('ul > li').first()
-  await expect(firstCard).toBeVisible()
-  const cardBounds = await firstCard.boundingBox()
-  expect(cardBounds).not.toBeNull()
-  // A single file/document packs at its content height instead of filling the canvas.
-  expect(cardBounds!.height).toBeLessThanOrEqual(160)
+  await expect(files.getByRole('button', { name: 'Fichiers', exact: true })).toBeVisible()
+  await expect(files).toContainText('Les pièces jointes confidentielles restent dans leur salon.')
 
   expect(
     (
@@ -124,7 +119,7 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
   await page.screenshot({ path: info.outputPath('workspace-files.png'), animations: 'disabled' })
   await page.getByRole('link', { name: 'announcements', exact: true }).click()
   await expect(page.getByRole('log')).toBeVisible()
-  await expect(files).toHaveCount(0)
+  await expect(files).toBeHidden()
   const heading = page.getByRole('heading', { name: 'announcements', exact: true })
   await heading.focus()
   await expect(heading).toHaveCSS('outline-style', 'none')
@@ -137,7 +132,7 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
     canvas.getContext('2d')!.fillRect(0, 0, 2, 2)
     return canvas.toDataURL('image/png').split(',')[1]!
   })
-  await page.locator('input[type="file"]').setInputFiles({
+  await page.locator('form input[type="file"]').setInputFiles({
     name: 'founder-preview.png',
     mimeType: 'image/png',
     buffer: Buffer.from(png, 'base64'),

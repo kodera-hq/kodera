@@ -1,4 +1,7 @@
-import { lazy, Suspense } from 'react'
+import { DriveWorkspaceContext, type DriveDocumentRequest } from '../docs/DriveWorkspaceContext'
+import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
+import { purgeProtectedDocsOfflineDatabases } from '../docs/collabSession'
+import { lazy, Suspense, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
@@ -18,9 +21,7 @@ const LazyExtensionsCatalogPanel = lazy(() =>
     default: module.ExtensionsCatalogPanel,
   }))
 )
-const LazyWorkspaceFilesPanel = lazy(() =>
-  import('./WorkspaceFilesPanel').then((module) => ({ default: module.WorkspaceFilesPanel }))
-)
+const LazyWorkspaceCollaborativeDocs = lazy(() => import('../docs/WorkspaceCollaborativeDocs'))
 const LazyCallsSurfaceView = lazy(() =>
   import('./CallsSurfaceView').then((module) => ({ default: module.CallsSurfaceView }))
 )
@@ -31,6 +32,13 @@ const LazyCalendarSurfaceView = lazy(() =>
 )
 
 export interface EspaceCanvasPanesProps {
+  roomBoundary?: RoomBoundary | undefined
+  isConfidential?: boolean | undefined
+  requestedDocument?: DriveDocumentRequest | undefined
+  onDocumentRequestHandled?: ((sequence: number) => void) | undefined
+  onUpdateChannelDocument?:
+    ((channelId: string, id: string, patch: { title: string; content: string }) => void) | undefined
+  navigationRequestKey?: number | undefined
   signedOut: boolean
   onReconnect: (() => void) | undefined
   docsEverOpened: boolean
@@ -59,19 +67,23 @@ export interface EspaceCanvasPanesProps {
 }
 
 export function EspaceCanvasPanes({
+  roomBoundary,
+  isConfidential = false,
+  requestedDocument,
+  onDocumentRequestHandled,
+  onUpdateChannelDocument,
+  navigationRequestKey,
+  directRoomId,
   signedOut,
   onReconnect,
   docsEverOpened,
   activeChannel,
-  directRoomId,
   docsCanvasSlot,
   effectiveCanvasMode,
   searchEntries,
   activeStore,
   snapshot,
   documents,
-  openStudioDocument,
-  onOpenDocument,
   onSelectTextChannel,
   onSelectDirect,
   workspace,
@@ -82,6 +94,41 @@ export function EspaceCanvasPanes({
   onOpenCallStage,
 }: EspaceCanvasPanesProps) {
   const { t } = useTranslation()
+  useEffect(() => {
+    const channels = workspace.categories
+      .flatMap((category) => category.channels)
+      .concat(workspace.uncategorised_channels ?? [])
+    const purgeProtectedDocuments = () => {
+      const latestSnapshot = activeStore.getSnapshot?.() ?? snapshot
+      const protectedDocuments = (
+        documents.length > 0 ? documents : (activeStore.getInitialDocuments?.().docs ?? [])
+      ).filter((doc) => {
+        const channel = channels.find((item) => item.id === doc.channelId)
+        const room = latestSnapshot.channels.get(doc.channelId)
+        const boundary =
+          room?.state === 'resolved'
+            ? (activeStore.getRoomBoundary?.(room.roomId) ??
+              latestSnapshot.rooms.find((entry) => entry.roomId === room.roomId)?.confidentiality)
+            : undefined
+        return (
+          (channel && 'isConfidential' in channel && channel.isConfidential === true) ||
+          channel?.is_confidential ||
+          (doc.channelId === activeChannel?.id &&
+            (isConfidential || (roomBoundary !== undefined && !permitsPlaintext(roomBoundary)))) ||
+          (boundary !== undefined && !permitsPlaintext(boundary))
+        )
+      })
+      for (const doc of protectedDocuments) {
+        for (const scopeKey of new Set(['local-workspace', workspace.organisation_id])) {
+          if (scopeKey) purgeProtectedDocsOfflineDatabases(scopeKey, `channel:${doc.id}`)
+        }
+      }
+    }
+    const unsubscribe = activeStore.subscribe?.(purgeProtectedDocuments)
+    purgeProtectedDocuments()
+    return unsubscribe
+  }, [activeChannel?.id, activeStore, documents, isConfidential, roomBoundary, snapshot, workspace])
+
   return (
     <>
       {signedOut ? (
@@ -95,18 +142,52 @@ export function EspaceCanvasPanes({
         </div>
       ) : null}
 
-      {docsEverOpened &&
-      activeChannel != null &&
-      directRoomId === null &&
-      docsCanvasSlot !== undefined ? (
+      {!(
+        (directRoomId !== null ||
+          isConfidential ||
+          (roomBoundary !== undefined && !permitsPlaintext(roomBoundary))) &&
+        effectiveCanvasMode !== 'docs' &&
+        effectiveCanvasMode !== 'files'
+      ) &&
+      (docsEverOpened || effectiveCanvasMode === 'docs' || effectiveCanvasMode === 'files') ? (
         <div
-          hidden={effectiveCanvasMode !== 'docs'}
+          hidden={effectiveCanvasMode !== 'docs' && effectiveCanvasMode !== 'files'}
           data-testid="espace-inline-docs-canvas"
-          className={
-            effectiveCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
-          }
+          className="canvas-enter flex min-h-0 flex-1 flex-col"
         >
-          {docsCanvasSlot}
+          <DriveWorkspaceContext.Provider
+            key={activeChannel?.id ?? 'workspace'}
+            value={{
+              canvasMode: effectiveCanvasMode === 'files' ? 'files' : 'docs',
+              navigationRequestKey,
+              onDocumentRequestHandled,
+              onUpdateChannelDocument,
+              workspaceId: `${workspace.organisation_id}:${workspace.id}`,
+              store: activeStore,
+              snapshot,
+              channels: searchEntries.map((entry) => ({
+                ...entry,
+                ...workspace.categories
+                  .flatMap((category) => category.channels)
+                  .concat(workspace.uncategorised_channels ?? [])
+                  .find((channel) => channel.id === entry.id),
+              })),
+              documents:
+                documents.length > 0 ? documents : (activeStore.getInitialDocuments?.().docs ?? []),
+              activeChannelId: activeChannel?.id,
+              roomBoundary,
+              isConfidential,
+              requestedDocument,
+              onOpenChannel: onSelectTextChannel,
+              onOpenDirect: onSelectDirect,
+            }}
+          >
+            {docsCanvasSlot ?? (
+              <Suspense fallback={<Skeleton shape="block" />}>
+                <LazyWorkspaceCollaborativeDocs initialSurface="drive" />
+              </Suspense>
+            )}
+          </DriveWorkspaceContext.Provider>
         </div>
       ) : null}
       {effectiveCanvasMode === 'integrations' ? (
@@ -121,32 +202,6 @@ export function EspaceCanvasPanes({
         >
           <Suspense fallback={<Skeleton shape="block" />}>
             <LazyCalendarSurfaceView organisationId={workspace.organisation_id} />
-          </Suspense>
-        </div>
-      ) : null}
-      {effectiveCanvasMode === 'files' ? (
-        <div
-          data-testid="espace-files-canvas"
-          className="canvas-enter flex min-h-0 flex-1 flex-col"
-        >
-          <Suspense
-            fallback={
-              <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
-                <Skeleton shape="text" />
-                <Skeleton shape="block" />
-              </div>
-            }
-          >
-            <LazyWorkspaceFilesPanel
-              activeChannelId={activeChannel?.id}
-              store={activeStore}
-              snapshot={snapshot}
-              searchEntries={searchEntries}
-              documents={documents}
-              {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
-              onOpenChannel={onSelectTextChannel}
-              onOpenDirect={onSelectDirect}
-            />
           </Suspense>
         </div>
       ) : null}
