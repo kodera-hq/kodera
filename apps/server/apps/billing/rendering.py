@@ -99,10 +99,11 @@ def _normalise_pdf(pdf: bytes, snapshot: Snapshot) -> bytes:
         TextStringObject,
     )
 
-    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(pdf)))
+    writer: Any = PdfWriter(clone_from=PdfReader(io.BytesIO(pdf)))
+    writer.pdf_header = "%PDF-1.7"
     instant = snapshot.issued_at.astimezone(UTC)
     pdf_date = instant.strftime("D:%Y%m%d%H%M%S+00'00'")
-    metadata = dict(writer.metadata or {})
+    metadata: dict[str, Any] = dict(writer.metadata or {})
     metadata.update({"/CreationDate": pdf_date, "/ModDate": pdf_date})
     metadata.pop("/Trapped", None)
     if writer._info is not None:
@@ -164,18 +165,29 @@ class OfflineRenderer:
         from reportlab.pdfgen.canvas import Canvas
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+        from .issuer_validation import validate_issuer
+
+        validate_issuer(seller=snapshot.seller)
         validate_xml(xml)
         font_path = Path(str(distribution("reportlab").locate_file("reportlab/fonts/Vera.ttf")))
         font = TTFont("BillingVera", str(font_path))
         pdfmetrics.registerFont(font)
+
+        def _normalize_pdf_text(value: str) -> str:
+            # Bitstream Vera lacks U+202F/U+2009 (offer.toml) and U+2192 ('->' in InvoiceLine).
+            return value.replace("\u202f", "\u00a0").replace("\u2009", " ").replace("\u2192", "->")
+
         content = [
-            snapshot.number,
-            snapshot.currency,
-            snapshot.seller.name,
-            snapshot.seller.address,
-            snapshot.buyer.name,
-            snapshot.buyer.address,
-            *(line.description for line in snapshot.lines),
+            _normalize_pdf_text(value)
+            for value in (
+                snapshot.number,
+                snapshot.currency,
+                snapshot.seller.name,
+                snapshot.seller.address,
+                snapshot.buyer.name,
+                snapshot.buyer.address,
+                *(line.description for line in snapshot.lines),
+            )
         ]
         if len(snapshot.lines) > 1000 or sum(len(value) for value in content) > 100_000:
             raise IntegrityRefusedError("document_render_bound")
@@ -191,11 +203,13 @@ class OfflineRenderer:
         story: list[Any] = []
 
         def line(value: str) -> None:
+            normalized = _normalize_pdf_text(value)
             if any(
-                ord(char) not in font.face.charToGlyph and char not in "\n\r\t" for char in value
+                ord(char) not in font.face.charToGlyph and char not in "\n\r\t"
+                for char in normalized
             ):
                 raise IntegrityRefusedError("document_font_unsupported_character")
-            story.append(Paragraph(escape(value).replace("\n", "<br/>"), style))
+            story.append(Paragraph(escape(normalized).replace("\n", "<br/>"), style))
 
         line(("Credit note " if snapshot.type_code == "381" else "Invoice ") + snapshot.number)
         line("Issued: " + snapshot.issued_at.isoformat())
@@ -245,6 +259,7 @@ class OfflineRenderer:
                 **{
                     **kwargs,
                     "invariant": 1,
+                    "pageCompression": 0,
                     "pdfVersion": (1, 7),
                     "enforceColorSpace": "RGB",
                     "initialFontName": "BillingVera",
@@ -271,7 +286,11 @@ class OfflineRenderer:
             afrelationship="alternative",
             xmp_compression=False,
         )
-        return _normalise_pdf(bytes(packaged), snapshot)
+        from .facturx_pdfa_validator import validate_facturx_pdfa3b
+
+        result = _normalise_pdf(bytes(packaged), snapshot)
+        validate_facturx_pdfa3b(result, expected_xml_bytes=xml)
+        return result
 
 
 def verify_pdfa_report(raw: bytes) -> None:
@@ -319,19 +338,21 @@ class OfflineValidator:
     def validate(self, *, pdf: bytes, xml: bytes, snapshot_sha256: str) -> None:
         from pypdf import PdfReader
 
-        validate_xml(xml)
+        from .facturx_pdfa_validator import validate_facturx_pdfa3b
+
         try:
-            reader = PdfReader(io.BytesIO(pdf), strict=True)
+            reader: Any = PdfReader(io.BytesIO(pdf), strict=True)
             if (
                 reader.is_encrypted
                 or set(reader.attachments) != {"factur-x.xml"}
                 or reader.attachments["factur-x.xml"] != [xml]
-                or reader.metadata.get("/Subject")
+                or (reader.metadata or {}).get("/Subject")
                 != "Immutable accounting snapshot " + snapshot_sha256
             ):
                 raise ValueError
         except Exception:
             raise IntegrityRefusedError("document_embedded_xml_mismatch") from None
+        validate_facturx_pdfa3b(pdf, expected_xml_bytes=xml, run_configured_validator=False)
         with TemporaryDirectory(prefix="billing-pdfa-") as directory:
             path = Path(directory) / "invoice.pdf"
             path.write_bytes(pdf)
