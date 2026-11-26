@@ -10,6 +10,7 @@ import type { FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { sovereignLiveReady } from '../../config'
 import { ApiProblem } from '../../api/client'
 import { rememberSharedRealmSlug } from '../../app/communityAccess'
 import { queryClient as appQueryClient } from '../../app/queryClient'
@@ -465,7 +466,9 @@ export function SelfServeCreateWorkspace({
   const router = useRouter()
   const queryClient = useQueryClient()
   const hintId = useId()
-  const [plan, setPlan] = useState<SelfServePlanChoice>(initialPlan)
+  const offerSovereign = sovereignLiveReady()
+  const [selectedPlan, setPlan] = useState<SelfServePlanChoice>(initialPlan)
+  const plan = offerSovereign ? selectedPlan : 'freemium'
   const [name, setName] = useState('')
   const [nameTouched, setNameTouched] = useState(false)
   const [editedSlug, setEditedSlug] = useState<string | undefined>(undefined)
@@ -633,27 +636,29 @@ export function SelfServeCreateWorkspace({
         </p>
       </div>
 
-      <fieldset className="flex flex-col gap-2">
-        <legend className="text-sm font-medium text-c-ink">
-          {t('console.home.create.label-plan')}
-        </legend>
-        {(['freemium', 'sovereign'] as const).map((choice) => (
-          <label
-            key={choice}
-            className="flex min-h-6 items-center gap-2 text-sm text-c-ink narrow:min-h-[44px]"
-          >
-            <input
-              type="radio"
-              name="plan"
-              value={choice}
-              checked={plan === choice}
-              onChange={() => setPlan(choice)}
-              className="h-4 w-4 accent-c-accent-ink focus-visible:ring focus-visible:ring-c-accent-ink"
-            />
-            {t(`console.home.create.plan-${choice}`)}
-          </label>
-        ))}
-      </fieldset>
+      {offerSovereign ? (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium text-c-ink">
+            {t('console.home.create.label-plan')}
+          </legend>
+          {(['freemium', 'sovereign'] as const).map((choice) => (
+            <label
+              key={choice}
+              className="flex min-h-6 items-center gap-2 text-sm text-c-ink narrow:min-h-[44px]"
+            >
+              <input
+                type="radio"
+                name="plan"
+                value={choice}
+                checked={plan === choice}
+                onChange={() => setPlan(choice)}
+                className="h-4 w-4 accent-c-accent-ink focus-visible:ring focus-visible:ring-c-accent-ink"
+              />
+              {t(`console.home.create.plan-${choice}`)}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
 
       <TextField
         label={t('console.home.create.label-name')}

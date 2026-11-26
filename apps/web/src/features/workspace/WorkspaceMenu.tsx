@@ -1,9 +1,9 @@
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { onCommunityHost } from '../../app/communityHost'
+import { communityWorkspaceCreationHref, onCommunityHost } from '../../app/communityHost'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
-import { workspaceMenuCopy } from './workspaceMenuMessages'
+import { workspaceMenuCopy } from '../../i18n/catalogues/workspaceMenuMessages'
 import { initialsOf } from '../../ui/Avatar/Avatar'
 
 export type WorkspaceCommand =
@@ -28,6 +28,7 @@ export function WorkspaceMenu({
   const { t, i18n } = useTranslation()
   const copy = workspaceMenuCopy(i18n.resolvedLanguage)
   const organisationSwitch = useOrganisationSwitch()
+  const createHref = slug === 'community' ? communityWorkspaceCreationHref() : undefined
   const memberships = organisationSwitch?.memberships ?? [{ name, slug, current: true }]
   return (
     <Menu.Root>
@@ -69,9 +70,14 @@ export function WorkspaceMenu({
             ))}
           </Menu.RadioGroup>
           <Menu.Separator className="my-1 h-px bg-c-border-soft" />
-          {/* On the public community's own host an ordinary member has one workspace, this one,
-              and no way to create another: the entry opened a setup they could not finish. Staff
-              keep it, and every other deployment is unchanged. */}
+          {createHref && (
+            <Menu.Item asChild className={ITEM}>
+              <a href={createHref} referrerPolicy="no-referrer">
+                {copy.createPersonal}
+              </a>
+            </Menu.Item>
+          )}
+          {/* Local workspace configuration on the public Community host is staff-only. */}
           {onCommunityHost() && organisationSwitch?.staff !== true ? null : (
             <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('configure')}>
               {copy.create}

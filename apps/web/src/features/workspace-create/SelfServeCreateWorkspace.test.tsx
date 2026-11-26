@@ -45,6 +45,7 @@ afterAll(() => server.close())
 
 describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
   it('keeps the plan radios accessible and free of inline styles inside the creation form', async () => {
+    vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', 'true')
     const { container } = renderSelfServe()
     expect(container.querySelector('form')).not.toBeNull()
     expect(container.querySelector('[style]')).toBeNull()
@@ -66,6 +67,16 @@ describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
     expect(screen.getByRole('textbox', { name: 'Nom de l’espace' })).toHaveFocus()
     expect(new FormData(container.querySelector('form')!).get('plan')).toBe('freemium')
   })
+
+  it.each([undefined, 'false', '1', 'TRUE'])(
+    'offers only cardless creation for a Sovereign request when readiness is %s',
+    (value) => {
+      vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', value)
+      renderSelfServe({ initialPlan: 'sovereign', existingSovereignOrgSlug: 'existing-owner' })
+      expect(screen.queryByRole('radio')).toBeNull()
+      expect(screen.getByRole('button', { name: 'Créer mon espace gratuit' })).toBeDisabled()
+    }
+  )
 
   it('provisions a cardless freemium PME workspace and navigates straight to /$org/workspace', async () => {
     const observed: { key: string | null; body: unknown }[] = []
@@ -164,6 +175,7 @@ describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
   })
 
   it('routes ?plan=sovereign directly to /$org/order?pack=sovereign when an owned organisation already exists', async () => {
+    vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', 'true')
     renderSelfServe({
       initialPlan: 'sovereign',
       existingSovereignOrgSlug: 'maison-vercelli',
@@ -201,6 +213,7 @@ describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
         )
       )
     )
+    vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', 'true')
     renderSelfServe({ initialPlan: 'sovereign' })
     await userEvent.type(
       screen.getByRole('textbox', { name: 'Nom de l’espace' }),
