@@ -60,6 +60,7 @@ pub enum OidcLoopbackError {
     InvalidAuthorizationCode,
     ListenerBindFailed,
     ListenerTimedOut,
+    ListenerAborted,
 }
 
 impl fmt::Display for OidcLoopbackError {
@@ -83,6 +84,7 @@ impl fmt::Display for OidcLoopbackError {
             Self::InvalidAuthorizationCode => "invalid_authorization_code",
             Self::ListenerBindFailed => "listener_bind_failed",
             Self::ListenerTimedOut => "listener_timed_out",
+            Self::ListenerAborted => "listener_aborted",
         };
         f.write_str(code)
     }
@@ -714,6 +716,7 @@ impl OidcLoopbackListener {
             deep_link_policy,
             timeout_ms,
             MAX_LOOPBACK_TIMEOUT_MS,
+            || false,
         )
     }
 
@@ -724,7 +727,18 @@ impl OidcLoopbackListener {
         deep_link_policy: &DeepLinkAdmissionPolicy,
         timeout_ms: u64,
     ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
-        self.accept_with_limit(session, deep_link_policy, timeout_ms, 180_000)
+        self.accept_once_interactive_until(session, deep_link_policy, timeout_ms, || false)
+    }
+
+    /// Aborts a pending interactive callback when its browser launcher fails.
+    pub(crate) fn accept_once_interactive_until(
+        self,
+        session: OidcPkceSession,
+        deep_link_policy: &DeepLinkAdmissionPolicy,
+        timeout_ms: u64,
+        abort: impl Fn() -> bool,
+    ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
+        self.accept_with_limit(session, deep_link_policy, timeout_ms, 180_000, abort)
     }
 
     fn accept_with_limit(
@@ -733,6 +747,7 @@ impl OidcLoopbackListener {
         deep_link_policy: &DeepLinkAdmissionPolicy,
         timeout_ms: u64,
         max_timeout_ms: u64,
+        abort: impl Fn() -> bool,
     ) -> Result<OidcCallbackOutcome, OidcLoopbackError> {
         let clamped_ms = timeout_ms.clamp(50, max_timeout_ms);
         let deadline = Instant::now() + Duration::from_millis(clamped_ms);
@@ -741,6 +756,9 @@ impl OidcLoopbackListener {
             .map_err(|_| OidcLoopbackError::ListenerBindFailed)?;
 
         let (mut stream, peer) = loop {
+            if abort() {
+                return Err(OidcLoopbackError::ListenerAborted);
+            }
             match self.listener.accept() {
                 Ok(conn) => break conn,
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -767,22 +785,29 @@ impl OidcLoopbackListener {
         let mut byte = [0u8; 1];
         let request_deadline = deadline.min(Instant::now() + Duration::from_secs(1));
         while !buf.ends_with(b"\r\n\r\n") {
+            if abort() {
+                return Err(OidcLoopbackError::ListenerAborted);
+            }
             let remaining = request_deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(OidcLoopbackError::ListenerTimedOut);
             }
             stream
-                .set_read_timeout(Some(remaining))
+                .set_read_timeout(Some(remaining.min(Duration::from_millis(10))))
                 .map_err(|_| OidcLoopbackError::CallbackMalformed)?;
-            if buf.len() >= MAX_LOOPBACK_HTTP_REQUEST_BYTES
-                || stream
-                    .read(&mut byte)
-                    .map_err(|_| OidcLoopbackError::CallbackMalformed)?
-                    == 0
-            {
+            if buf.len() >= MAX_LOOPBACK_HTTP_REQUEST_BYTES {
                 return Err(OidcLoopbackError::CallbackMalformed);
             }
-            buf.push(byte[0]);
+            match stream.read(&mut byte) {
+                Ok(0) => return Err(OidcLoopbackError::CallbackMalformed),
+                Ok(_) => buf.push(byte[0]),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => return Err(OidcLoopbackError::CallbackMalformed),
+            }
         }
         let request_text =
             core::str::from_utf8(&buf).map_err(|_| OidcLoopbackError::CallbackMalformed)?;
@@ -827,6 +852,9 @@ impl OidcLoopbackListener {
         }
 
         let synthetic_uri = format!("http://127.0.0.1:{}{target}", self.port);
+        if abort() {
+            return Err(OidcLoopbackError::ListenerAborted);
+        }
         let outcome = session.consume_callback_uri(&synthetic_uri, deep_link_policy);
         match &outcome {
             Ok(_) => {

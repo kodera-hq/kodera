@@ -19,6 +19,7 @@ import type { ReactNode } from 'react'
 import { setTokenProvider } from '../api/client'
 import type { AuthAdapter, AuthCallbackResult, AuthSessionSnapshot, AuthUser } from './AuthAdapter'
 import * as matrixAuth from './matrix'
+import { retireSessionGeneration } from './sessionGeneration'
 import { authAdapter as defaultAdapter } from './oidc'
 import {
   clearLocalSessionStorage,
@@ -278,6 +279,8 @@ export function AuthProvider({
     } catch {
       /* Local cleanup still follows. */
     }
+    // Fence prepared bearer requests before retirement observers or push teardown can run.
+    retireSessionGeneration()
     lifetime.retire()
     let didPushTeardown = false
     try {

@@ -6,7 +6,7 @@ use crate::{
     verify_embedded_tauri_conf_csp, DesktopShellError, MonitorWorkArea, PttModifier, PttTriggerKey,
     SavedWindowState, WindowBounds,
 };
-use crate::{DeepLinkAdmissionPolicy, DesktopShellHost, MAX_IPC_COMMAND_BYTES};
+use crate::{DeepLinkAdmissionPolicy, DesktopShellHost};
 use std::borrow::Cow;
 use tao::{
     dpi::{LogicalPosition, LogicalSize},
@@ -26,10 +26,17 @@ enum DesktopUserEvent {
         generation: u64,
         sender_url: String,
         body: String,
+        ingress_permit: Option<super::ipc_bridge::CoreIngressPermit>,
+    },
+    CoreIngressBusy {
+        generation: u64,
+        sender_url: String,
+        metadata: String,
     },
     AsyncIpcResolved {
         generation: u64,
         outcome: WebViewIpcOutcome,
+        core_epoch: Option<u64>,
     },
     DocumentChanged(u64),
     UpdateReady(crate::updater::ReadyUpdate),
@@ -349,14 +356,24 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
             ),
             true,
         )
-        .with_ipc_handler(move |request| {
-            let body = request.body();
-            if body.len() <= MAX_IPC_COMMAND_BYTES {
-                let _ = ipc_proxy.send_event(DesktopUserEvent::IpcMessage {
-                    generation: ipc_generation.load(std::sync::atomic::Ordering::SeqCst),
-                    sender_url: request.uri().to_string(),
-                    body: body.clone(),
-                });
+        .with_ipc_handler({
+            let ingress = super::ipc_bridge::CoreIngress::default();
+            move |request| {
+                let body = request.body();
+                if let Some(ingress_permit) = ingress.admit(body) {
+                    let _ = ipc_proxy.send_event(DesktopUserEvent::IpcMessage {
+                        generation: ipc_generation.load(std::sync::atomic::Ordering::SeqCst),
+                        sender_url: request.uri().to_string(),
+                        body: body.clone(),
+                        ingress_permit,
+                    });
+                } else if let Some(metadata) = super::ipc_bridge::busy_core_ingress_metadata(body) {
+                    let _ = ipc_proxy.send_event(DesktopUserEvent::CoreIngressBusy {
+                        generation: ipc_generation.load(std::sync::atomic::Ordering::SeqCst),
+                        sender_url: request.uri().to_string(),
+                        metadata,
+                    });
+                }
             }
         })
         .with_navigation_handler(move |target_url| {
@@ -550,44 +567,72 @@ pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShell
                     bridge.begin_document(generation);
                 }
             }
+            Event::UserEvent(DesktopUserEvent::CoreIngressBusy {
+                generation,
+                sender_url,
+                metadata,
+            }) => {
+                if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                bridge.begin_document(generation);
+                if let Ok(outcome) = bridge.reject_busy_core_ingress(&sender_url, &metadata) {
+                    for js in outcome.eval_scripts {
+                        let _ = webview.evaluate_script(&js);
+                    }
+                }
+            }
             Event::UserEvent(DesktopUserEvent::IpcMessage {
                 generation,
                 sender_url,
                 body,
+                ingress_permit,
             }) => {
                 if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
                     return;
                 }
                 bridge.begin_document(generation);
                 let proxy = event_proxy.clone();
-                if let Ok(outcome) = bridge.handle_ipc_request_with_native_dispatch(
-                    &sender_url,
-                    &body,
-                    move |task| {
-                        std::thread::spawn(move || {
-                            let outcome = task.run();
-                            let _ = proxy.send_event(DesktopUserEvent::AsyncIpcResolved {
-                                generation,
-                                outcome,
-                            });
-                        });
-                        WebViewIpcOutcome {
-                            eval_scripts: Vec::new(),
-                            window_action: None,
-                        }
-                    },
-                ) {
+                // Validate and hand off under the ingress permit; release on every exit.
+                let _ingress_permit = ingress_permit;
+                let bridge_epoch = bridge.core_requests.clone();
+                if let Ok(outcome) =
+                    bridge.handle_ipc_request_with_native_dispatch(&sender_url, &body, |task| {
+                        let core_epoch =
+                            matches!(&task, super::ipc_bridge::NativeIpcTask::Core { .. })
+                                .then(|| bridge_epoch.epoch());
+                        task.spawn_with(
+                            |work| {
+                                std::thread::Builder::new()
+                                    .name("native-ipc".into())
+                                    .spawn(work)
+                                    .map(|_| ())
+                            },
+                            move |outcome| {
+                                let _ = proxy.send_event(DesktopUserEvent::AsyncIpcResolved {
+                                    generation,
+                                    outcome,
+                                    core_epoch,
+                                });
+                            },
+                        )
+                    })
+                {
                     let _ = event_proxy.send_event(DesktopUserEvent::AsyncIpcResolved {
                         generation,
                         outcome,
+                        core_epoch: None,
                     });
                 }
             }
             Event::UserEvent(DesktopUserEvent::AsyncIpcResolved {
                 generation,
                 outcome,
+                core_epoch,
             }) => {
-                if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                if core_epoch.is_some_and(|epoch| epoch != bridge.core_requests.epoch())
+                    || generation != document_generation.load(std::sync::atomic::Ordering::SeqCst)
+                {
                     return;
                 }
                 for js in outcome.eval_scripts {

@@ -41,6 +41,18 @@ const required = (value: unknown, name: string): string => {
 export const coreApiUrl = (): string =>
   required(import.meta.env.VITE_CORE_API_URL, 'VITE_CORE_API_URL')
 
+/** Whether the current origin is bundled Desktop content with an available native bridge. */
+export function isDesktopBundledOrigin(): boolean {
+  if (typeof window === 'undefined') return false
+  const bridge = (window as Window & { koderaDesktop?: { invoke?: unknown } }).koderaDesktop
+  if (!bridge || typeof bridge.invoke !== 'function') return false
+  const { protocol, hostname } = window.location
+  return (
+    protocol === 'kodera-asset:' ||
+    (protocol === 'https:' && hostname === 'kodera-asset.localhost')
+  )
+}
+
 /**
  * Keycloak base URL. No realm: tenant admins authenticate against their own tenant
  * realm, resolved at runtime from the organisation slug or the email domain (ADR-0002).

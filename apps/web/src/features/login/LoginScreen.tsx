@@ -41,6 +41,7 @@ import { Handoff } from './Handoff'
 import type { RealmDiscoveryResult } from './useDiscoverRealm'
 import { useDiscoverRealm } from './useDiscoverRealm'
 import { SUPPORT_EMAIL } from '../../app/supportContact'
+import { DesktopCreateWorkspaceButton } from './DesktopCreateWorkspaceButton'
 
 const OrganisationChoice = lazy(() =>
   import('./OrganisationChoice').then(({ OrganisationChoice }) => ({ default: OrganisationChoice }))
@@ -232,6 +233,7 @@ export function LoginScreen({
   // email → slug → email round trip acceptance test 2 exercises.
   const [savedEmail, setSavedEmail] = useState('')
   const [emailError, setEmailError] = useState<string | undefined>(undefined)
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false)
   const retry = useRetryCountdown()
   const emailInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -307,7 +309,7 @@ export function LoginScreen({
   })
 
   async function onSubmitEmail(values: EmailFormValues) {
-    if (retry.isWaiting()) return
+    if (retry.isWaiting() || creatingWorkspace) return
     setEmailError(undefined)
     const email = normalizeEmail(values.email)
     setSavedEmail(email)
@@ -429,7 +431,7 @@ export function LoginScreen({
                 <Button
                   type="submit"
                   loading={discover.isPending}
-                  disabled={!online || retry.secondsLeft > 0}
+                  disabled={!online || creatingWorkspace || retry.secondsLeft > 0}
                   className="w-full"
                 >
                   {t('console.login.realm.action-continue')}
@@ -438,6 +440,7 @@ export function LoginScreen({
 
               <Button
                 variant="tertiary"
+                disabled={creatingWorkspace}
                 onClick={() => setView({ kind: 'slug', prefillEmail: savedEmail })}
               >
                 {t('console.login.realm.action-use-slug')}
@@ -448,7 +451,7 @@ export function LoginScreen({
               initialSlug={initialSlug}
               notice={view.notice}
               prefillEmail={view.prefillEmail}
-              online={online}
+              online={online && !creatingWorkspace}
               pending={discover.isPending}
               retry={retry}
               onBack={(email) => {
@@ -456,7 +459,7 @@ export function LoginScreen({
                 setView({ kind: 'email' })
               }}
               onSubmit={async (rawSlug) => {
-                if (retry.isWaiting()) return undefined
+                if (retry.isWaiting() || creatingWorkspace) return undefined
                 trackDiscoverySubmitted('slug')
                 try {
                   const result = await discover.mutateAsync({ slug: rawSlug })
@@ -467,6 +470,11 @@ export function LoginScreen({
               }}
             />
           )}
+
+          <DesktopCreateWorkspaceButton
+            disabled={!online || discover.isPending}
+            onPendingChange={setCreatingWorkspace}
+          />
 
           <div className="flex items-center justify-between border-t border-c-border-soft pt-4 text-sm">
             <LinkButton variant="tertiary" size="sm" href={`mailto:${SUPPORT_EMAIL}`}>

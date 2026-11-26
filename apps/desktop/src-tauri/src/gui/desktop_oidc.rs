@@ -3,19 +3,20 @@
 use super::{resolve_js_promise, GuiWindowAction, WebViewIpcOutcome};
 use crate::{
     DeepLinkAdmissionPolicy, KeychainCredentialStore, KeychainSecretKind, OidcIssuerAllowlist,
-    OidcLoopbackListener, OidcPkceSession,
+    OidcLoopbackError, OidcLoopbackListener, OidcPkceSession,
 };
 use kodera_rs::{sha256, validate_docs_host};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
+const BROWSER_LAUNCH_GRACE: Duration = Duration::from_millis(300);
 const INTERACTIVE_TIMEOUT_MS: u64 = 180_000;
 const MAX_RESPONSE_BYTES: u64 = 128 * 1024;
 type NativeResult<T> = Result<T, String>;
@@ -31,7 +32,8 @@ pub trait NativeOidcHttpClient: Send + Sync {
 }
 
 pub trait NativeBrowserLauncher: Send + Sync {
-    fn open(&self, url: &str) -> NativeResult<()>;
+    /// Returns a per-launch failure signal, including exits after the startup grace period.
+    fn open(&self, url: &str) -> NativeResult<Arc<AtomicBool>>;
 }
 
 pub struct StdOidcHttpClient;
@@ -142,7 +144,7 @@ impl NativeOidcHttpClient for StdOidcHttpClient {
 }
 
 impl NativeBrowserLauncher for StdBrowserLauncher {
-    fn open(&self, url: &str) -> NativeResult<()> {
+    fn open(&self, url: &str) -> NativeResult<Arc<AtomicBool>> {
         validate_browser_url(url)?;
         #[cfg(target_os = "macos")]
         let mut command = {
@@ -176,20 +178,283 @@ impl NativeBrowserLauncher for StdBrowserLauncher {
             .write_all(url.as_bytes())
             .is_err()
         {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = terminate_browser_launcher(child);
             return Err("oidc_browser".into());
         }
         #[cfg(not(target_os = "windows"))]
         drop(child.stdin.take());
-        if child
-            .wait()
-            .map_err(|_| "oidc_browser".to_string())?
-            .success()
-        {
-            Ok(())
-        } else {
+        wait_for_browser_launcher(child, BROWSER_LAUNCH_GRACE)
+    }
+}
+
+// Keep child ownership outside the fallible spawn closure until handoff succeeds.
+fn reap_browser_launcher(
+    child: Child,
+    failed: Arc<AtomicBool>,
+    terminate: bool,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+) -> NativeResult<()> {
+    let child = Arc::new(Mutex::new(Some(child)));
+    if terminate {
+        if let Some(child) = child.lock().map_err(|_| "oidc_browser")?.as_mut() {
+            let _ = child.kill();
+        }
+    }
+    let owned = child.clone();
+    if spawn(Box::new(move || {
+        if let Ok(mut slot) = owned.lock() {
+            if let Some(mut child) = slot.take() {
+                drop(slot);
+                if !matches!(child.wait(), Ok(status) if status.success()) {
+                    failed.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+    }))
+    .is_err()
+    {
+        if let Some(mut child) = child.lock().map_err(|_| "oidc_browser")?.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        return Err("oidc_browser".into());
+    }
+    Ok(())
+}
+fn spawn_browser_reaper(work: Box<dyn FnOnce() + Send>) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("browser-launcher-reaper".into())
+        .spawn(work)
+        .map(|_| ())
+}
+fn terminate_browser_launcher(child: Child) -> NativeResult<()> {
+    reap_browser_launcher(
+        child,
+        Arc::new(AtomicBool::new(false)),
+        true,
+        spawn_browser_reaper,
+    )
+}
+
+fn wait_for_browser_launcher(mut child: Child, grace: Duration) -> NativeResult<Arc<AtomicBool>> {
+    let failed = Arc::new(AtomicBool::new(false));
+    let deadline = Instant::now() + grace;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    Ok(failed)
+                } else {
+                    Err("oidc_browser".into())
+                }
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                // Foreground browser helpers and cold OS launchers may stay alive.
+                // Accept callbacks now, but report a later failure to the pending wait.
+                reap_browser_launcher(child, failed.clone(), false, spawn_browser_reaper)?;
+                return Ok(failed);
+            }
+            Err(_) => {
+                let _ = terminate_browser_launcher(child);
+                return Err("oidc_browser".into());
+            }
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod browser_launcher_tests {
+    use super::*;
+
+    #[test]
+    fn reaper_spawn_failure_kills_and_reaps_owned_child_without_panicking() {
+        for terminate in [false, true] {
+            let child = Command::new("sh")
+                .args(["-c", "read -r release"])
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let pid = child.id().to_string();
+            assert_eq!(
+                reap_browser_launcher(child, Arc::new(AtomicBool::new(false)), terminate, |_| Err(
+                    std::io::Error::other("synthetic thread quota")
+                )),
+                Err("oidc_browser".into())
+            );
+            assert!(!Command::new("ps")
+                .args(["-p", &pid, "-o", "stat="])
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+    }
+
+    #[test]
+    fn matrix_wait_observes_launcher_failure_after_browser_handoff() {
+        struct FailingLauncher;
+        impl NativeBrowserLauncher for FailingLauncher {
+            fn open(&self, _: &str) -> NativeResult<Arc<AtomicBool>> {
+                let failed = Arc::new(AtomicBool::new(false));
+                let signal = failed.clone();
+                std::thread::Builder::new()
+                    .spawn(move || signal.store(true, Ordering::SeqCst))
+                    .unwrap();
+                Ok(failed)
+            }
+        }
+        let started = Instant::now();
+        let services = NativeOidcServices {
+            browser: Arc::new(FailingLauncher),
+            ..NativeOidcServices::default()
+        };
+        assert_eq!(services.execute("desktop_matrix_sso_loopback",
+            r#"{"homeserver_origin":"https://community.kodera.io","state":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
+            &DeepLinkAdmissionPolicy::default(), 0), Err("oidc_browser".into()));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn immediate_launcher_success_and_failure_are_reported() {
+        for (script, expected) in [
+            ("exit 0", Ok(false)),
+            ("exit 1", Err("oidc_browser".into())),
+        ] {
+            let child = Command::new("sh").args(["-c", script]).spawn().unwrap();
+            let started = Instant::now();
+            assert_eq!(
+                wait_for_browser_launcher(child, BROWSER_LAUNCH_GRACE)
+                    .map(|failed| failed.load(Ordering::SeqCst)),
+                expected
+            );
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
+    }
+
+    struct ScriptLauncher {
+        script: &'static str,
+        callback_delay: Option<Duration>,
+    }
+
+    impl NativeBrowserLauncher for ScriptLauncher {
+        fn open(&self, url: &str) -> NativeResult<Arc<AtomicBool>> {
+            let child = Command::new("sh")
+                .args(["-c", self.script])
+                .spawn()
+                .unwrap();
+            if let Some(delay) = self.callback_delay {
+                let query: std::collections::BTreeMap<_, _> = url
+                    .split_once('?')
+                    .unwrap()
+                    .1
+                    .split('&')
+                    .map(|pair| {
+                        let (key, value) = pair.split_once('=').unwrap();
+                        (key.to_owned(), decode_query(value).unwrap())
+                    })
+                    .collect();
+                let redirect = query["redirect_uri"].clone();
+                let state = query["state"].clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(delay);
+                    let (authority, path) = redirect
+                        .strip_prefix("http://")
+                        .unwrap()
+                        .split_once('/')
+                        .unwrap();
+                    let mut stream = TcpStream::connect(authority).unwrap();
+                    write!(stream, "GET /{path}?code=one-use-code&state={state}&iss=https%3A%2F%2Fauth.kodera.io%2Frealms%2Fcommunity HTTP/1.1\r\nHost: {authority}\r\n\r\n").unwrap();
+                    let mut reply = String::new();
+                    stream.read_to_string(&mut reply).unwrap();
+                    assert!(reply.starts_with("HTTP/1.1 200"));
+                });
+            }
+            wait_for_browser_launcher(child, BROWSER_LAUNCH_GRACE)
+        }
+    }
+
+    struct CallbackHttp;
+    impl NativeOidcHttpClient for CallbackHttp {
+        fn post_form(&self, _: &str, _: &str) -> NativeResult<NativeOidcHttpResponse> {
+            // Reaching token exchange proves the callback was accepted.
+            Err("test_token_exchange".into())
+        }
+    }
+
+    fn sign_in(launcher: ScriptLauncher) -> NativeResult<Value> {
+        NativeOidcServices {
+            browser: Arc::new(launcher),
+            http: Arc::new(CallbackHttp),
+            ..NativeOidcServices::default()
+        }
+        .execute(
+            "desktop_oidc_exchange_loopback",
+            r#"{"issuer_origin":"https://auth.kodera.io","realm":"community","client_id":"kodera-desktop"}"#,
+            &DeepLinkAdmissionPolicy::default(),
+            0,
+        )
+    }
+
+    #[test]
+    fn sign_in_reports_delayed_launcher_failure_before_interactive_timeout() {
+        let started = Instant::now();
+        assert_eq!(
+            sign_in(ScriptLauncher {
+                script: "sleep 0.5; exit 1",
+                callback_delay: None,
+            }),
             Err("oidc_browser".into())
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn sign_in_accepts_callbacks_after_successful_exit_or_while_launcher_is_running() {
+        for script in ["exit 0", "sleep 0.5; exit 0", "sleep 1; exit 0"] {
+            assert_eq!(
+                sign_in(ScriptLauncher {
+                    script,
+                    callback_delay: Some(Duration::from_millis(650)),
+                }),
+                Err("test_token_exchange".into())
+            );
+        }
+    }
+
+    #[test]
+    fn long_running_launcher_is_accepted_then_reaped_after_exit() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read -r release; exit 0"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id().to_string();
+        let mut stdin = child.stdin.take().unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            wait_for_browser_launcher(child, BROWSER_LAUNCH_GRACE)
+                .map(|failed| failed.load(Ordering::SeqCst)),
+            Ok(false)
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        // `ps` sees zombies too: absence proves the detached waiter reaped it.
+        let is_present = || {
+            Command::new("ps")
+                .args(["-p", &pid, "-o", "stat="])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        assert!(is_present(), "the foreground launcher must remain alive");
+        stdin.write_all(b"release\n").unwrap();
+        drop(stdin);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while is_present() {
+            assert!(Instant::now() < deadline, "launcher was not reaped");
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }
@@ -419,10 +684,12 @@ enum Audience {
     Multiple(Vec<String>),
 }
 impl Audience {
-    fn contains(&self, client_id: &str) -> bool {
+    fn trusts_only(&self, client_id: &str) -> bool {
         match self {
             Self::Single(value) => value == client_id,
-            Self::Multiple(values) => values.iter().any(|value| value == client_id),
+            Self::Multiple(values) => {
+                !values.is_empty() && values.iter().all(|value| value == client_id)
+            }
         }
     }
 }
@@ -434,6 +701,7 @@ struct IdentityClaims {
     aud: Option<Audience>,
     azp: Option<String>,
     amr: Option<Vec<String>>,
+    exp: Option<u64>,
 }
 
 impl NativeOidcServices {
@@ -519,12 +787,23 @@ impl NativeOidcServices {
         {
             return Err("oidc_invalid_identity".into());
         }
+        // Keycloak generateIDToken sets aud to client_id independently of access-token
+        // audience mappers. The checked operator realm templates map kodera-server
+        // only into access tokens (id.token.claim=false). azp never substitutes for
+        // aud: only this client is trusted; any supplied azp must match too.
         if token.id_token.is_some()
-            && claims.azp.as_deref() != Some(args.client_id.as_str())
-            && !claims
+            && (!claims.exp.is_some_and(|expiry| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .is_ok_and(|now| expiry > now.as_secs())
+            }) || !claims
                 .aud
                 .as_ref()
-                .is_some_and(|aud| aud.contains(&args.client_id))
+                .is_some_and(|aud| aud.trusts_only(&args.client_id))
+                || claims
+                    .azp
+                    .as_deref()
+                    .is_some_and(|azp| azp != args.client_id))
         {
             return Err("oidc_invalid_identity".into());
         }
@@ -706,13 +985,18 @@ impl NativeOidcServices {
         } else {
             "auth"
         };
-        self.browser.open(&format!(
+        let launcher_failed = self.browser.open(&format!(
             "{issuer}/protocol/openid-connect/{endpoint}?{}",
             form(&pairs).as_str()
         ))?;
         let callback = listener
-            .accept_once_interactive(session, policy, self.timeout_ms)
-            .map_err(|_| "oidc_loopback".to_string())?;
+            .accept_once_interactive_until(session, policy, self.timeout_ms, || {
+                launcher_failed.load(Ordering::SeqCst)
+            })
+            .map_err(|error| match error {
+                OidcLoopbackError::ListenerAborted => "oidc_browser".to_string(),
+                _ => "oidc_loopback".to_string(),
+            })?;
         let body = form(&[
             ("grant_type", "authorization_code"),
             ("client_id", &args.client_id),
@@ -754,7 +1038,7 @@ impl NativeOidcServices {
             "http://127.0.0.1:{port}/espace/callback?state={}",
             args.state
         );
-        self.browser.open(&format!(
+        let launcher_failed = self.browser.open(&format!(
             "{}/_matrix/client/v3/login/sso/redirect?redirectUrl={}",
             args.homeserver_origin,
             encode(&redirect)
@@ -765,6 +1049,9 @@ impl NativeOidcServices {
         let deadline = Instant::now()
             + Duration::from_millis(self.timeout_ms.clamp(50, INTERACTIVE_TIMEOUT_MS));
         let (mut stream, peer) = loop {
+            if launcher_failed.load(Ordering::SeqCst) {
+                return Err("oidc_browser".into());
+            }
             match listener.accept() {
                 Ok(conn) => break conn,
                 Err(e)

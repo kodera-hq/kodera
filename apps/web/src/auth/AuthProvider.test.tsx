@@ -11,7 +11,7 @@ import {
 } from '@/auth/AuthProvider'
 import { PUSH_DEVICE_KEY } from '@/features/notifications/pushState'
 import * as matrixAuth from '@/auth/matrix'
-import { coreApi } from '@/api/client'
+import { coreApi, NetworkError } from '@/api/client'
 import { authAdapter as defaultAuthAdapter } from './oidc'
 
 // Opt-in AP2 observes the actual provider-owned React subscription records.
@@ -689,7 +689,39 @@ it('completes credential revocation, Matrix sign-out, and local storage wipe whe
     ),
   })
   const initialStamp = result.current.lifetime.getRetirementStamp()
+  const nativeOk = { status: 200, headers: {}, body_base64: btoa('{}') }
+  const finishes: Array<(value: typeof nativeOk) => void> = []
+  const invoke = vi
+    .fn()
+    .mockImplementation(() =>
+      finishes.length < 6
+        ? new Promise<typeof nativeOk>((resolve) => finishes.push(resolve))
+        : Promise.resolve(nativeOk)
+    )
+  const bundledWindow = Object.create(window) as Window
+  Object.defineProperties(bundledWindow, {
+    location: { value: new URL('kodera-asset://localhost/') },
+    koderaDesktop: { value: { invoke } },
+  })
+  vi.stubGlobal('window', bundledWindow)
+  const active = Array.from({ length: 6 }, () => coreApi().GET('/me'))
   try {
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(6))
+    let subscriptions: ReturnType<typeof vi.spyOn> | undefined
+    const queued = coreApi()
+      .GET('/me', {
+        middleware: [
+          {
+            onRequest({ request }) {
+              expect(request.headers.get('Authorization')).toBe('Bearer stalled-push-token')
+              subscriptions = vi.spyOn(request.signal, 'addEventListener')
+              return request
+            },
+          },
+        ],
+      })
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(subscriptions?.mock.calls).toHaveLength(1))
     let settled = false
     const signOutPromise = result.current.auth.signOut().then(() => {
       settled = true
@@ -699,6 +731,24 @@ it('completes credential revocation, Matrix sign-out, and local storage wipe whe
     expect(result.current.lifetime.getRetirementStamp()).not.toBe(initialStamp)
     expect(stalledLoadPush).toHaveBeenCalledTimes(1)
     expect(settled).toBe(false)
+
+    // Release the pre-sign-out FIFO waiter while push teardown still owns the token.
+    finishes.forEach((finish) => finish(nativeOk))
+    await Promise.all(active)
+    const refused = await queued
+    expect(refused).toBeInstanceOf(NetworkError)
+    expect((refused as NetworkError).cause).toBe('core_api_aborted')
+    expect(
+      invoke.mock.calls.filter(([command]) => command === 'desktop_core_api_request')
+    ).toHaveLength(6)
+    expect(settled).toBe(false)
+    expect(adapter.getAccessToken()).toBe('stalled-push-token')
+
+    // Work created during push teardown captures the new generation.
+    await coreApi().GET('/me')
+    expect(
+      invoke.mock.calls.filter(([command]) => command === 'desktop_core_api_request')
+    ).toHaveLength(7)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(PUSH_MODULE_LOAD_TIMEOUT_MS - 1)
@@ -728,6 +778,7 @@ it('completes credential revocation, Matrix sign-out, and local storage wipe whe
     unmount()
     revoke.mockRestore()
     matrixAuth.clearMatrixSession()
+    vi.unstubAllGlobals()
     vi.useRealTimers()
   }
 })

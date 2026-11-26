@@ -51,6 +51,7 @@
   "console.login.passport.verifying": "Vérification du lien de connexion…",
   "console.login.realm.a11y-retry-ready": "Vous pouvez réessayer.",
   "console.login.realm.action-continue": "Continuer",
+  "console.login.realm.action-create-workspace": "Créer un espace",
   "console.login.realm.action-help": "Besoin d'aide ?",
   "console.login.realm.action-use-email": "Utiliser une adresse e-mail",
   "console.login.realm.action-use-slug": "Utiliser l'identifiant de votre organisation",
@@ -68,6 +69,7 @@
   "console.login.realm.error-rate-limited_many": "Trop de tentatives. Réessayez dans {{count}} secondes.",
   "console.login.realm.error-rate-limited_one": "Trop de tentatives. Réessayez dans {{count}} seconde.",
   "console.login.realm.error-rate-limited_other": "Trop de tentatives. Réessayez dans {{count}} secondes.",
+  "console.login.realm.error-sign-in": "La connexion n'a pas pu démarrer. Réessayez.",
   "console.login.realm.error-slug-format": "Un identifiant contient de 5 à 20 caractères : lettres sans accent, chiffres et tirets. Il ne commence ni ne finit par un tiret.",
   "console.login.realm.error-slug-unknown": "Cet identifiant ne correspond à aucune organisation. Vérifiez votre e-mail de bienvenue.",
   "console.login.realm.error-unavailable_many": "Le service est momentanément indisponible. Réessayez dans {{count}} secondes ; si cela persiste, écrivez-nous à {{email}}.",
@@ -78,6 +80,7 @@
   "console.login.realm.label-slug": "Identifiant de votre organisation",
   "console.login.realm.placeholder-email": "prenom.nom@votreentreprise.fr",
   "console.login.realm.placeholder-slug": "acme-sa",
+  "console.login.realm.status-opening-sign-in": "Ouverture de la connexion sécurisée…",
   "console.login.realm.subtitle": "Indiquez votre adresse e-mail professionnelle.",
   "console.login.realm.subtitle-slug": "Indiquez l'identifiant de votre organisation.",
   "console.login.realm.title": "Se connecter à votre console"

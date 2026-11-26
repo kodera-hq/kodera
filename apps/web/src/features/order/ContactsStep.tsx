@@ -11,7 +11,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useCallback, useEffect, useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import type { FieldPath, UseFormRegisterReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -82,7 +82,6 @@ export function ContactsStep(props: ContactsStepProps) {
 
 function ContactsForm({ draft, owner, update, onContinue, onBack }: ContactsStepProps) {
   const { t } = useTranslation()
-  const [suggestions, setSuggestions] = useState<string[]>([])
   const [checkedSlug, setCheckedSlug] = useState<string>()
   const [recovered] = useState(() => readStashedContacts(owner, draft.draftId))
   // The domain Core puts the tenant under (`tenantAddress.ts`); unset, the field names none.
@@ -99,21 +98,25 @@ function ContactsForm({ draft, owner, update, onContinue, onBack }: ContactsStep
     mode: 'onBlur',
   })
 
-  useEffect(() => {
-    const subscription = form.watch((_values, { name }) => {
-      if (name === undefined) return
-      const values = form.getValues()
-      update({ contactEdits: values, contacts: undefined })
-      const saved = readEditable(draft.draftId, owner)
-      if (
-        isActiveOrderOwner(owner) &&
-        saved.status === 'saved' &&
-        JSON.stringify(saved.draft.contactEdits) === JSON.stringify(values)
-      )
-        clearStashedContacts(owner, draft.draftId)
-    })
-    return () => subscription.unsubscribe()
-  }, [form, update, owner, draft.draftId])
+  const { subscribe } = form
+  useEffect(
+    () =>
+      subscribe({
+        formState: { values: true },
+        callback: ({ values, name }) => {
+          if (name === undefined) return
+          update({ contactEdits: values, contacts: undefined })
+          const saved = readEditable(draft.draftId, owner)
+          if (
+            isActiveOrderOwner(owner) &&
+            saved.status === 'saved' &&
+            JSON.stringify(saved.draft.contactEdits) === JSON.stringify(values)
+          )
+            clearStashedContacts(owner, draft.draftId)
+        },
+      }),
+    [subscribe, update, owner, draft.draftId]
+  )
 
   useFormStash(
     useCallback(() => {
@@ -141,24 +144,19 @@ function ContactsForm({ draft, owner, update, onContinue, onBack }: ContactsStep
     }
   }, [recovered, owner, draft.draftId, update])
 
-  const slugValue = form.watch('slug')
+  const slugValue = useWatch({ control: form.control, name: 'slug' })
   const slugQuery = useSlugAvailabilityQuery(checkedSlug ?? '', checkedSlug !== undefined)
   const countryError = form.formState.errors.country?.message
+  const suggestions = slugQuery.data?.available === false ? (slugQuery.data.suggestions ?? []) : []
 
   useEffect(() => {
-    if (slugQuery.data === undefined) return
-    if (slugQuery.data.available) {
-      setSuggestions([])
-      return
-    }
-    setSuggestions(slugQuery.data.suggestions ?? [])
+    if (slugQuery.data === undefined || slugQuery.data.available) return
     form.setError('slug', {
       message: t('console.order.contacts.error-slug-taken', {
         suggestion: slugQuery.data.suggestions?.[0] ?? slugQuery.data.slug,
       }),
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slugQuery.data])
+  }, [slugQuery.data, form, t])
 
   function handleSlugBlur() {
     const trimmed = slugValue.trim()
@@ -171,7 +169,6 @@ function ContactsForm({ draft, owner, update, onContinue, onBack }: ContactsStep
   function chooseSuggestion(value: string) {
     form.setValue('slug', value)
     form.clearErrors('slug')
-    setSuggestions([])
     setCheckedSlug(value)
   }
 

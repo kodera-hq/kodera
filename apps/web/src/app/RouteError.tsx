@@ -44,6 +44,7 @@ import { ApiProblem } from '../api/client'
 import type { ProblemType } from '../api/generated/problems'
 import { useAuth } from '../auth/AuthProvider'
 import { useReauthenticate } from '../auth/sessionExpiry'
+import { rememberReturnTo } from '../auth/return-to'
 import { TextButton as Button } from '../ui/Button/TextButton'
 import { LinkButton } from '../ui/LinkButton/LinkButton'
 import {
@@ -153,7 +154,16 @@ function SessionExpiredContent() {
               if (reauthenticate(org)) return
               clearReauthenticationFromError()
             }
-            void router.navigate({ to: '/login' })
+            const returnTo = router.state.location.href
+            // Retire the refused credential before LoginRoute can reuse it.
+            // Sign-out clears session storage, so remember the destination afterwards.
+            void auth
+              .signOut()
+              .catch(() => {})
+              .then(() => {
+                rememberReturnTo(returnTo)
+                return router.navigate({ to: '/login' })
+              })
           }}
         >
           {t('console.shell.session.action-sign-in-again')}

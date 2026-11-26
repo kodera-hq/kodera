@@ -1,4 +1,5 @@
 import { createRoute, redirect } from '@tanstack/react-router'
+import { ApiProblem } from '../../api/client'
 import { onCommunityHost } from '../../app/communityHost'
 import { loadCurrentUser } from '../../app/currentUser'
 import { SessionLoading } from '../../app/SessionLoading'
@@ -37,7 +38,15 @@ export const selfServeWorkspaceRoute = createRoute({
           entry.state === 'active'
       )
       return { existingSovereignOrgSlug: ownedOrg?.organisation.slug }
-    } catch {
+    } catch (error) {
+      // A newly registered Community identity may not have a Core membership yet.
+      // Every other refusal or transport failure belongs to the route error boundary.
+      if (
+        !(error instanceof ApiProblem) ||
+        error.status !== 403 ||
+        error.type !== 'https://kodera.io/problems/identity-unknown'
+      )
+        throw error
       return { existingSovereignOrgSlug: undefined }
     }
   },

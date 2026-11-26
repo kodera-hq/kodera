@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { authAdapter } from '../../auth/oidc'
-import { rememberReturnTo } from '../../auth/return-to'
+import { hasReturnTo, rememberReturnTo } from '../../auth/return-to'
 import { keepLanguagePreference } from '../../i18n/languagePreference'
 import { Button } from '../../ui/Button/Button'
 import { Card, CardBody } from '../../ui/Card/Card'
@@ -11,18 +11,21 @@ import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { KoderaMark } from '../../ui/icons/KoderaMark'
 import { LINK_TEXT } from '../../ui/linkText'
 import { communityCopy } from './communityMessages'
+import { isDesktopBundledOrigin } from '../../auth/desktopOidc'
+import { DesktopCreateWorkspaceButton } from './DesktopCreateWorkspaceButton'
 
 export function CommunityWelcome() {
   const { i18n } = useTranslation()
   const copy = communityCopy(i18n.resolvedLanguage)
   const [pending, setPending] = useState(false)
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false)
   const [failed, setFailed] = useState(false)
   async function enter(registration: boolean) {
-    if (pending) return
+    if (pending || creatingWorkspace) return
     setPending(true)
     setFailed(false)
     try {
-      rememberReturnTo('/community/workspace')
+      if (!hasReturnTo()) rememberReturnTo('/community/workspace')
       await authAdapter.signIn('community', { registration })
     } catch {
       setPending(false)
@@ -39,15 +42,25 @@ export function CommunityWelcome() {
             <p className="text-md text-c-ink-2">{copy.subtitle}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button disabled={pending} onClick={() => void enter(false)}>
+            <Button disabled={pending || creatingWorkspace} onClick={() => void enter(false)}>
               {copy.signIn}
             </Button>
-            <Button variant="secondary" disabled={pending} onClick={() => void enter(true)}>
-              {copy.signUp}
-            </Button>
+            {isDesktopBundledOrigin() ? (
+              <DesktopCreateWorkspaceButton
+                fullWidth={false}
+                disabled={pending}
+                onPendingChange={setCreatingWorkspace}
+              />
+            ) : (
+              <Button variant="secondary" disabled={pending} onClick={() => void enter(true)}>
+                {copy.signUp}
+              </Button>
+            )}
           </div>
           <p className="text-sm text-c-ink-3">{copy.hint}</p>
           <Link
+            disabled={pending || creatingWorkspace}
+            aria-disabled={pending || creatingWorkspace}
             to="/login"
             search={{ mode: 'tenant' }}
             className={cx(

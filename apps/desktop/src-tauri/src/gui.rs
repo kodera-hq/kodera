@@ -131,6 +131,8 @@ const ADMITTED_WEBVIEW_IPC_COMMANDS: &[&str] = &[
     "configure_media_capture",
     "configure_ptt",
     "delete_keychain_credential",
+    "desktop_core_api_abort",
+    "desktop_core_api_request",
     "desktop_matrix_sso_loopback",
     "desktop_oidc_clear_session",
     "desktop_oidc_exchange_loopback",
@@ -172,6 +174,8 @@ const PRIVILEGED_INTERNAL_ONLY_COMMANDS: &[&str] = &[
     "begin_oidc_pkce_loopback",
     "complete_oidc_pkce_callback",
     "delete_keychain_credential",
+    "desktop_core_api_abort",
+    "desktop_core_api_request",
     "desktop_matrix_sso_loopback",
     "desktop_oidc_clear_session",
     "desktop_oidc_exchange_loopback",
@@ -239,6 +243,7 @@ pub fn verify_embedded_default_capability() -> Result<(), &'static str> {
 }
 
 mod assets;
+mod desktop_core_api;
 mod desktop_oidc;
 mod ipc_bridge;
 #[cfg(feature = "desktop-app")]
@@ -278,6 +283,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
   const documentId = Array.from(crypto.getRandomValues(new Uint8Array(16)),
     byte => byte.toString(16).padStart(2, '0')).join('');
   Object.defineProperty(window, '__KODERA_DOCUMENT_ID__', { value: documentId });
+  let sessionGeneration = 0;
   let nativeGeneration = null;
   let nativeCapability = null;
   let nextReqId = 1;
@@ -312,7 +318,26 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
         reject(new Error('invalid_ipc_command'));
         return;
       }
-      if (pending.size >= 64) { reject(new Error('ipc_pending_limit')); return; }
+      // Retiring the session also settles local promises whose native replies are fenced.
+      if (cmd === 'desktop_oidc_clear_session' || cmd === 'init_session' ||
+          cmd === 'quit' || cmd === 'plugin:window|close') {
+        sessionGeneration++;
+        for (const [id, entry] of pending) {
+          if (entry.cmd === 'desktop_core_api_request') {
+            pending.delete(id);
+            entry.reject(new Error('core_api_aborted'));
+          }
+        }
+      }
+      // Abort has an independent bounded control budget, even when ordinary calls fill up.
+      let ordinary = 0, controls = 0;
+      for (const entry of pending.values()) {
+        if (entry.cmd === 'desktop_core_api_abort') controls++;
+        else ordinary++;
+      }
+      if (cmd === 'desktop_core_api_abort' ? controls >= 8 : ordinary >= 64) {
+        reject(new Error('ipc_pending_limit')); return;
+      }
       const reqId = nextReqId++;
       let payload;
       if (cmd === 'plugin:event|listen') {
@@ -439,6 +464,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
 
   const koderaDesktop = Object.freeze({
     identifier: 'io.kodera.desktop',
+    get sessionGeneration() { return sessionGeneration; },
     productName: 'Kodera',
     version: '0.2.0',
     invoke: invoke,

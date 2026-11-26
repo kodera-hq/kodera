@@ -1,3 +1,5 @@
+import { retireSessionGeneration } from './sessionGeneration'
+
 // Privileged native Desktop WebView OIDC PKCE loopback + OS Keychain + Matrix SSO bridge.
 // Active exclusively when running inside the bundled Kodera Desktop WebView
 // (`kodera-asset://localhost` on macOS/Linux or `https://kodera-asset.localhost` on Windows)
@@ -10,6 +12,8 @@
 //   never in JavaScript or Web Storage.
 // - WebView JavaScript receives only the short-lived `access_token`, `expires_in`, and verified
 //   identity claims (`issuer`, `subject`, `amr`).
+
+export { isDesktopBundledOrigin } from '../config'
 
 export interface DesktopNativeBridge {
   readonly identifier: string
@@ -40,16 +44,6 @@ function getDesktopBridge(): DesktopNativeBridge | undefined {
   const bridge = (window as unknown as WindowWithDesktopBridge).koderaDesktop
   if (bridge && typeof bridge.invoke === 'function') return bridge
   return undefined
-}
-
-export function isDesktopBundledOrigin(): boolean {
-  if (typeof window === 'undefined') return false
-  if (getDesktopBridge() === undefined) return false
-  const { protocol, hostname } = window.location
-  return (
-    protocol === 'kodera-asset:' ||
-    (protocol === 'https:' && hostname === 'kodera-asset.localhost')
-  )
 }
 
 export function isDesktopOidcRefusal(error: unknown): boolean {
@@ -131,6 +125,7 @@ export async function desktopOidcRefreshSession(params: {
 }
 
 export async function desktopOidcClearSession(params: { realm: string }): Promise<void> {
+  retireSessionGeneration()
   const bridge = getDesktopBridge()
   if (bridge === undefined) return
   await bridge.invoke('desktop_oidc_clear_session', {

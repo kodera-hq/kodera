@@ -94,6 +94,32 @@ Components: `Card`, `TextField` (`EmailField` in the default variant), `Button` 
 "Continuer"), `LinkButton` (switch to slug), `InlineAlert` (discovery failure), `HelpEntry`,
 `Banner` (platform-wide incident), language toggle as `ButtonGroup`.
 
+#### Desktop workspace creation from sign-in
+
+Status: Active
+
+The bundled Desktop sign-in card also offers a secondary action,
+`console.login.realm.action-create-workspace` (FR: « Créer un espace », EN: « Create a workspace »).
+It is available before realm discovery, including the identifier fallback. Web realm discovery
+keeps its existing actions. On the Desktop Community welcome, this action replaces account-only
+registration; ordinary Community sign-in still returns to the Community workspace.
+
+Activation starts native Community registration through the existing OIDC adapter and loopback
+PKCE exchange. The native issuer allowlist, external-browser isolation and keychain handling
+remain authoritative. No server URL or redirect target is accepted from this action. The current
+screen has no custom server URL field; self-hosted issuer configuration remains native policy.
+
+A one-use intent stays in memory for at most ten minutes, with no tokens or user data. Only a
+ready Community session with a usable credential consumes it. The login route then opens
+`/workspaces/new`, the existing authenticated self-serve creation screen, instead of a previous
+return destination. Failure clears the intent, announces a translated retry message, and restores
+the controls. A later ordinary sign-in cannot inherit a failed, expired or consumed intent.
+
+Acceptance: both locales expose the secondary action to keyboard and assistive technology;
+pending activation is coalesced; successful native registration lands directly in workspace
+creation; refused registration can be retried; the card emits no inline styles and passes axe.
+The shared button retains its 44-pixel minimum touch target on narrow layouts.
+
 ### 4.2 `login-organisation` — one email, several organisations
 
 ```text

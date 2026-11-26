@@ -252,10 +252,12 @@ describe('the form', () => {
     expect(screen.queryByRole('checkbox')).toBeNull()
   })
 
-  it('has no axe violation', async () => {
+  it('has no inline styles or axe violation inside its form', async () => {
     serve(newCalls())
     const { container } = show()
     await createButton()
+    expect(container.querySelector('form')).not.toBeNull()
+    expect(container.querySelector('[style]')).toBeNull()
     const results = await axe.run(container, { rules: { 'color-contrast': { enabled: false } } })
     expect(results.violations.map((violation) => violation.id)).toEqual([])
   })

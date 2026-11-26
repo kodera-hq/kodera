@@ -88,6 +88,65 @@ const ownerClaimNativeRule = {
       return undefined
     }
 
+    function privateFunction(node, name, async) {
+      const declaration = immediateFunction(node)
+      return declaration?.type === 'FunctionDeclaration' &&
+        declaration.id?.name === name &&
+        declaration.parent?.type === 'Program' &&
+        !declaration.generator &&
+        declaration.async === async
+        ? declaration
+        : undefined
+    }
+
+    // Core IPC may read only the injected bridge and install only its private fetch adapter.
+    // Neither exception admits another native fetch call or a global-object alias.
+    function coreBridgeReference(identifier) {
+      const cast = identifier.parent
+      const access = cast?.parent
+      return (
+        identifier.name === 'window' &&
+        privateFunction(identifier, 'coreFetch', true) &&
+        cast.type === 'TSAsExpression' &&
+        access?.type === 'MemberExpression' &&
+        access.object === cast &&
+        !access.computed &&
+        !access.optional &&
+        access.property.type === 'Identifier' &&
+        access.property.name === 'koderaDesktop'
+      )
+    }
+
+    function coreTransportProperty(property) {
+      const node = property.parent
+      const object = node?.parent
+      const conditional = object?.parent
+      const returned = conditional?.parent
+      const declaration = privateFunction(property, 'coreTransport', false)
+      return (
+        declaration &&
+        declaration.params.length === 1 &&
+        declaration.params[0].name === 'bundled' &&
+        declaration.body.body.length === 1 &&
+        returned?.type === 'ReturnStatement' &&
+        returned.parent === declaration.body &&
+        conditional.type === 'ConditionalExpression' &&
+        conditional.test.type === 'Identifier' &&
+        conditional.test.name === 'bundled' &&
+        conditional.consequent === object &&
+        conditional.alternate.type === 'ObjectExpression' &&
+        conditional.alternate.properties.length === 0 &&
+        object.type === 'ObjectExpression' &&
+        object.properties.length === 1 &&
+        node.type === 'Property' &&
+        !node.computed &&
+        !node.method &&
+        !node.shorthand &&
+        node.value.type === 'Identifier' &&
+        node.value.name === 'coreFetch'
+      )
+    }
+
     function fetchProperty(node) {
       if (node.type === 'Literal') return node.value === 'fetch'
       return (
@@ -136,11 +195,17 @@ const ownerClaimNativeRule = {
         }
 
         for (const [identifier] of references) {
-          if (['window', 'globalThis', 'self'].includes(identifier.name)) {
+          if (
+            ['window', 'globalThis', 'self'].includes(identifier.name) &&
+            !coreBridgeReference(identifier)
+          ) {
             add(identifier, 'NATIVE_FETCH_ESCAPE', 'global-object')
           }
         }
-        for (const property of properties) add(property, 'NATIVE_FETCH_ESCAPE', 'fetch-property')
+        for (const property of properties) {
+          if (!coreTransportProperty(property))
+            add(property, 'NATIVE_FETCH_ESCAPE', 'fetch-property')
+        }
 
         const eligible = []
         const functions = new Set()

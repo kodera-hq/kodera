@@ -19,7 +19,6 @@ import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { LINK_TEXT } from '../../ui/linkText'
 import { PAGE_TITLE } from '../../ui/pageTitle'
-import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { TextField } from '../../ui/TextField/TextField'
 import { useLegalDocumentsQuery, useSlugAvailabilityQuery } from '../order/api'
@@ -634,15 +633,27 @@ export function SelfServeCreateWorkspace({
         </p>
       </div>
 
-      <RadioGroup
-        label={t('console.home.create.label-plan')}
-        value={plan}
-        onValueChange={(next) => setPlan(next as SelfServePlanChoice)}
-        options={[
-          { value: 'freemium', label: t('console.home.create.plan-freemium') },
-          { value: 'sovereign', label: t('console.home.create.plan-sovereign') },
-        ]}
-      />
+      <fieldset className="flex flex-col gap-2">
+        <legend className="text-sm font-medium text-c-ink">
+          {t('console.home.create.label-plan')}
+        </legend>
+        {(['freemium', 'sovereign'] as const).map((choice) => (
+          <label
+            key={choice}
+            className="flex min-h-6 items-center gap-2 text-sm text-c-ink narrow:min-h-[44px]"
+          >
+            <input
+              type="radio"
+              name="plan"
+              value={choice}
+              checked={plan === choice}
+              onChange={() => setPlan(choice)}
+              className="h-4 w-4 accent-c-accent-ink focus-visible:ring focus-visible:ring-c-accent-ink"
+            />
+            {t(`console.home.create.plan-${choice}`)}
+          </label>
+        ))}
+      </fieldset>
 
       <TextField
         label={t('console.home.create.label-name')}

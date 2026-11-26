@@ -155,6 +155,9 @@ when a key is present here and missing there, or present in one language and not
 | `console.login.realm.hint-slug` | Il figure dans votre e-mail de bienvenue. |
 | `console.login.realm.action-use-email` | Utiliser une adresse e-mail |
 | `console.login.realm.action-help` | Besoin d'aide ? |
+| `console.login.realm.action-create-workspace` | Créer un espace |
+| `console.login.realm.status-opening-sign-in` | Ouverture de la connexion sécurisée… |
+| `console.login.realm.error-sign-in` | La connexion n'a pas pu démarrer. Réessayez. |
 | `console.login.realm.error-email-required` | Saisissez votre adresse e-mail pour continuer. |
 | `console.login.realm.error-email-format` | Cette adresse ne semble pas complète. Vérifiez qu'elle contient un @ et un nom de domaine. |
 | `console.login.realm.error-email-invalid` | Cette adresse n'est pas valide. Vérifiez qu'elle ne contient ni espace ni lettre accentuée. |
