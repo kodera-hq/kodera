@@ -13,6 +13,7 @@ services:
     volumes:
       - ./Caddyfile.split:/etc/caddy/Caddyfile:ro
     environment:
+      KODERA_APP_ORIGIN: ${KODERA_APP_ORIGIN:-}
       KODERA_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
 
   # The web client is not started: its static origin is served elsewhere.
@@ -21,17 +22,19 @@ services:
 
   server:
     environment:
-      KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
+      KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}${KODERA_APP_ORIGIN:+,}${KODERA_APP_ORIGIN:-}
       KODERA_COLLAB_PUBLIC_URL: wss://api.${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}/documents/collab
 
   yjs-collab:
     environment:
-      KODERA_COLLAB_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
+      KODERA_COLLAB_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}${KODERA_APP_ORIGIN:+,}${KODERA_APP_ORIGIN:-}
 
   room-access:
     environment:
+      ROOM_ACCESS_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}${KODERA_APP_ORIGIN:+,}${KODERA_APP_ORIGIN:-}
       LIVEKIT_WS_URL: wss://livekit.${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
 
   synapse:
     environment:
+      KODERA_APP_ORIGIN: ${KODERA_APP_ORIGIN:-}
       KODERA_COMPOSE_TOPOLOGY: split

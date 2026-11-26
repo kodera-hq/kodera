@@ -81,7 +81,13 @@ def backend(environ, start_response):
         stream = environ["wsgi.input"]
         while stream.read(65536):
             pass
-    start_response("200 OK", [("Content-Length", "2")])
+    headers = [("Content-Length", "2")]
+    status = "200 OK"
+    if environ["PATH_INFO"].startswith(("/_matrix/", "/_synapse/")):
+        headers.extend([("Access-Control-Allow-Origin", "*"), ("Vary", "Accept")])
+        if environ.get("HTTP_X_ORIGINAL_URI") == "/_matrix/client/denied":
+            status = "403 Forbidden"
+    start_response(status, headers)
     return [b"OK"]
 
 guarded = BodyGuard(backend)
@@ -362,6 +368,47 @@ def admission_multi_client_check(admission_port, seen):
             sock.close()
 
 
+PRIMARY_ORIGIN = "https://community.example.org"
+APP_ORIGIN = "https://app.example.org"
+
+
+def split_matrix_sites(root):
+    # Exercise the checked-in Matrix handle twice on the smoke container's existing port.
+    source = (root / "deploy/community/Caddyfile.split").read_text()
+    site = re.search(r"(?ms)^matrix\.\{\$KODERA_DOMAIN\} \{.*?^\}", source).group()
+    sites = []
+    for host, variable in (("primary.test", "SMOKE_UNSET_ORIGIN"), ("dual.test", "KODERA_APP_ORIGIN")):
+        fixture = site.replace("matrix.{$KODERA_DOMAIN} {", f"http://{host}:8080 {{")
+        fixture = fixture.replace("{$KODERA_DOMAIN}", PRIMARY_ORIGIN.removeprefix("https://"))
+        sites.append(fixture.replace("KODERA_APP_ORIGIN", variable))
+    return "\n".join(sites)
+
+
+def matrix_cors_check(port):
+    for host in ("primary.test", "dual.test"):
+        for route, status in (("/_matrix/client/versions", 200), ("/_matrix/client/denied", 403)):
+            for method in ("GET", "OPTIONS"):
+                for origins in ((), (PRIMARY_ORIGIN,), (APP_ORIGIN,), (APP_ORIGIN + ".invalid",),
+                                ("null",), (PRIMARY_ORIGIN, APP_ORIGIN)):
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    try:
+                        conn.putrequest(method, route, skip_host=True)
+                        conn.putheader("Host", host)
+                        for origin in origins:
+                            conn.putheader("Origin", origin)
+                        conn.endheaders()
+                        response = conn.getresponse()
+                        response.read()
+                        require(response.status == status, f"Matrix {method} {route} returned {response.status}")
+                        grants = response.headers.get_all("Access-Control-Allow-Origin") or []
+                        allowed = origins == (PRIMARY_ORIGIN,) or (host == "dual.test" and origins == (APP_ORIGIN,))
+                        require(grants == (list(origins) if allowed else []), f"Unexpected Matrix CORS grant on {host}: {grants}")
+                        varies = {item.strip().lower() for line in response.headers.get_all("Vary", []) for item in line.split(",")}
+                        require({"origin", "accept"} <= varies, "Matrix CORS must vary by Origin and retain upstream Vary")
+                    finally:
+                        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--static", action="store_true")
@@ -391,12 +438,14 @@ def main():
                     config = (root / "deploy/community/Caddyfile").read_text()
                     config = config.replace("email {$KODERA_ACME_EMAIL}", "auto_https off\n\tadmin off")
                     config = config.replace("{$KODERA_DOMAIN} {", ":8080 {")
+                    config += "\n" + split_matrix_sites(root) + "\n"
                     config = config.replace("api-admission:8080", f"host.docker.internal:{admission_port}")
                     config = config.replace("synapse:8008", f"host.docker.internal:{backend_port}")
                     path = pathlib.Path(tmp) / "Caddyfile"
                     path.write_text(config)
                     subprocess.run([
                         "docker", "run", "--pull=never", "-d", "--rm", "--name", name,
+                        "-e", f"KODERA_APP_ORIGIN={APP_ORIGIN}",
                         "--add-host=host.docker.internal:host-gateway", "-p", "127.0.0.1::8080",
                         "-v", f"{path}:/etc/caddy/Caddyfile:ro", image,
                     ], check=True, stdout=subprocess.DEVNULL)
@@ -412,6 +461,7 @@ def main():
                     else:
                         raise SystemExit("Caddy not ready")
                     require(request(port, "GET", "/agent")[0] == 404, "Agent route exposed")
+                    matrix_cors_check(port)
                     slow_body_check(port, expect_close=False)
                     for _ in range(40):
                         if request(port, "POST", "/api/drain", b"ok")[0] == 200:

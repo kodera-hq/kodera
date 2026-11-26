@@ -82,9 +82,9 @@ What `docker-compose.split.yml` changes, and nothing more:
 
 - Caddy reads `Caddyfile.split`: three site blocks, `api.<KODERA_MATRIX_DOMAIN>`, `matrix.<KODERA_DOMAIN>` and `livekit.<KODERA_DOMAIN>`. Each routes only its own upstreams, with the paths of "What the internet can reach", and answers `404` on every other path, so `/agent/*`, `/_matrix/federation/*`, `/_matrix/key/*`, `/_synapse/admin/*` and `/.well-known/matrix/server` all answer `404`.
 - The `web` service is not started (it is moved to the `single-origin-web` profile, which this topology never enables).
-- `server` admits the browser origin `https://<KODERA_DOMAIN>` (`KODERA_CONSOLE_ORIGINS`), the only origin its CORS answers, preflight included.
-- `room-access` hands out `wss://livekit.<KODERA_DOMAIN>` as the signalling URL; it already admits `https://<KODERA_DOMAIN>` only (`ROOM_ACCESS_ALLOWED_ORIGINS`) and refuses any other preflight.
-- Synapse publishes `public_baseurl: https://matrix.<KODERA_DOMAIN>/`. Its single sign-on still returns the login token to the web origin `https://<KODERA_DOMAIN>/` only. Synapse grants every origin (`Access-Control-Allow-Origin: *`); `Caddyfile.split` replaces that grant with `https://<KODERA_DOMAIN>`.
+- Core, room-access and Yjs collaboration admit `https://<KODERA_DOMAIN>`. To host the web client at a second origin, pass `--app-origin https://app.example.org` to the generator or set `KODERA_APP_ORIGIN` in the split deployment's environment file. Each service then admits both exact origins. The additional origin must use HTTPS and a dedicated hostname.
+- Room-access hands out `wss://livekit.<KODERA_DOMAIN>` as the signalling URL.
+- Synapse publishes `public_baseurl: https://matrix.<KODERA_DOMAIN>/`. Caddy strips upstream CORS grants on Matrix routes and returns the requesting origin only when it matches a configured web origin. Responses vary by `Origin`.
 
 The static host must:
 
@@ -93,7 +93,7 @@ The static host must:
 - serve a web client built with `VITE_AUTH_MODE=oidc`, `VITE_ENABLE_MSW=0`, `VITE_CORE_API_URL=https://api.<KODERA_MATRIX_DOMAIN>/api/v1`, `VITE_KEYCLOAK_URL=<KODERA_OIDC_PROVIDER_ORIGIN>` and `VITE_MATRIX_DOMAIN=<KODERA_MATRIX_DOMAIN>`;
 - admit those exact endpoints in its Content-Security-Policy `connect-src`: the identity provider, `https://api.<KODERA_MATRIX_DOMAIN>`, `wss://api.<KODERA_MATRIX_DOMAIN>/documents/collab`, `https://matrix.<KODERA_DOMAIN>`, `wss://livekit.<KODERA_DOMAIN>`, and, when external object-storage attachments are enabled, the exact `KODERA_ATTACHMENT_BASE` bucket prefix (`https://<storage-host>/<path>/`).
 
-Register the Synapse callback of your realm's `synapse` client at the Matrix origin, `https://matrix.<KODERA_DOMAIN>/_synapse/client/oidc/callback`, and keep the `console` client's callbacks on the web origin.
+Register the Synapse callback of your realm's `synapse` client at the Matrix origin, `https://matrix.<KODERA_DOMAIN>/_synapse/client/oidc/callback`, and register the `console` client's callbacks on each configured web origin.
 
 Status: the split topology is checked by the repository gate and its Caddy configuration is parsed by the pinned Caddy image; no deployment of it is rehearsed in this repository.
 
@@ -132,7 +132,7 @@ Members sign in to Synapse through your identity provider, never with a Matrix p
 - the confidential client **`synapse`** of your realm, with the callback `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback` (`https://matrix.<KODERA_DOMAIN>/…` in the split topology), PKCE S256 and back-channel logout;
 - the Matrix localpart with the exact `{{ user.sub }}` template (Core ADR-0018), from the stable `sub` claim;
 - the initial display name from the realm's `given_name` claim only: the community realm sets `registrationEmailAsUsername`, so `preferred_username` is the member's e-mail address and neither it nor the full `name` claim is ever shown; members can change it (`enable_set_displayname`), and later SSO sign-ins never overwrite it (`sso.update_profile_information` stays off);
-- `sso.client_whitelist` holding `https://<KODERA_DOMAIN>/` only, with its trailing slash: Synapse matches by prefix.
+- `sso.client_whitelist` holding the `/espace/callback` URL on each configured web origin. Synapse matches these prefixes when the client appends its sign-in state.
 
 Which realm it is:
 
