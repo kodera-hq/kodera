@@ -24,12 +24,19 @@ export const selfServeWorkspaceRoute = createRoute({
     if (onCommunityHost()) {
       throw redirect({ to: '/$org/workspace', params: { org: 'community' } })
     }
+    const restored = await authAdapter.restoreSession()
     if (search.signIn === 'community' && window.location.origin === workspaceAppOrigin()) {
+      if (restored && authAdapter.getUser()?.realm === 'community') {
+        throw redirect({
+          to: '/workspaces/new',
+          search: search.plan ? { plan: search.plan } : {},
+          replace: true,
+        })
+      }
       // Only the app owns this PKCE transaction. Return to the form without replaying the handoff.
       if (!preload) rememberReturnTo('/workspaces/new')
       return { communityHandoff: true }
     }
-    const restored = await authAdapter.restoreSession()
     if (!restored || authAdapter.getAccessToken() === undefined) {
       rememberReturnTo(location.href)
       if (import.meta.env.VITE_AUTH_MODE === 'oidc') {

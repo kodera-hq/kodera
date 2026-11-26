@@ -40,6 +40,7 @@ afterEach(() => {
   server.resetHandlers()
   resetIdempotencyStore()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 afterAll(() => server.close())
 
