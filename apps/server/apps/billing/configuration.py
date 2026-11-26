@@ -67,12 +67,27 @@ def issuer_from_environment(environ: Mapping[str, str]) -> Issuer | None:
 
 
 def series_from_environment(environ: Mapping[str, str]) -> str:
-    series = environ.get("KODERA_INVOICE_SERIES", DEFAULT_SERIES)
-    if not SERIES.match(series):
+    series = environ.get("KODERA_INVOICE_SERIES")
+    if series is None:
+        series = environ.get("KODERA_INVOICE_PREFIX", DEFAULT_SERIES).removesuffix("-")
+    if not SERIES.fullmatch(series):
         raise ValueError("KODERA_INVOICE_SERIES is two to eight capitals, optionally twice")
-    if series.startswith("AV"):
-        # `AV-<series>` is the credit notes' series: an invoice series there would share its counter.
-        raise ValueError("KODERA_INVOICE_SERIES does not start with AV, the credit notes' prefix")
+    if series.startswith("AV") or series.endswith("-AV"):
+        raise ValueError("KODERA_INVOICE_SERIES does not start with AV or end with -AV")
+    return series
+
+
+CREDIT_NOTE_SERIES = re.compile(
+    r"(?:AV-(?!AV)[A-Z]{2,8}(?:-(?!AV\Z)[A-Z]{2,8})?|(?!AV)[A-Z]{2,8}-AV)\Z"
+)
+
+
+def credit_note_series_from_environment(environ: Mapping[str, str], *, invoice_series: str) -> str:
+    default = "KOD-AV" if invoice_series == "KOD" else f"AV-{invoice_series}"
+    series = environ.get("KODERA_CREDIT_NOTE_SERIES", default)
+    base = series.removeprefix("AV-") if series.startswith("AV-") else series.removesuffix("-AV")
+    if CREDIT_NOTE_SERIES.fullmatch(series) is None or base != invoice_series:
+        raise ValueError("KODERA_CREDIT_NOTE_SERIES must match the invoice series")
     return series
 
 

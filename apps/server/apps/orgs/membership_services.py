@@ -92,6 +92,7 @@ def read_directory(
             organisation_id=identity.organisation_id,
             issuer=identity.issuer,
             realm=identity.realm,
+            audience=verified.audience,
         ):
             raise DirectoryForbiddenError()
         role = directory_role(user_id=person.id, organisation_id=identity.organisation_id)

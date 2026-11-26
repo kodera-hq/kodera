@@ -71,6 +71,7 @@ def read_member_authority_in_snapshot(
         organisation_id=identity.organisation_id,
         issuer=identity.issuer,
         realm=identity.realm,
+        audience=verified.audience,
     ):
         raise MemberAuthorityNotFoundError()
     # The existing helper is the sole active/accepted membership predicate. The
@@ -85,7 +86,8 @@ def read_member_authority_in_snapshot(
     organisation = (
         Organisation.objects.filter(
             id=identity.organisation_id,
-            issuer=identity.issuer,
+            issuer=verified.issuer,
+            oidc_audience__in=verified.audience,
             realm=identity.realm,
             deleted_at__isnull=True,
         )
@@ -161,7 +163,12 @@ def resolve_all_member_authorities(
                 saw_unavailable = True
                 continue
             org_meta = (
-                Organisation.objects.filter(id=facts.organisation_id, deleted_at__isnull=True)
+                Organisation.objects.filter(
+                    id=facts.organisation_id,
+                    issuer=verified.issuer,
+                    oidc_audience__in=verified.audience,
+                    deleted_at__isnull=True,
+                )
                 .values_list("slug", "is_default_community")
                 .first()
             )

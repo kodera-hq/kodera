@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Protocol
 from xml.etree import ElementTree as ET
 
-from .integrity import PARIS, IntegrityRefusedError
+from .integrity import PARIS, IntegrityRefusedError, is_credit_note_number
 from .vat import EU_OSS_RATES_BP, EU_OSS_REGIME_CODE
 
 NS = {
@@ -136,7 +136,9 @@ def snapshot_of(row: object) -> Snapshot:
         net_minor=row.total_excl_vat_minor,
         vat_minor=row.vat_amount_minor,
         gross_minor=row.total_incl_vat_minor,
-        original_invoice_number=row.invoice.number if isinstance(row, CreditNote) else None,
+        original_invoice_number=row.invoice.number
+        if isinstance(row, CreditNote) and row.invoice is not None
+        else None,
     )
 
 
@@ -192,7 +194,7 @@ def _validate(s: Snapshot) -> None:
         or s.issued_at.tzinfo is None
         or s.currency != "EUR"
         or not s.lines
-        or (s.type_code == "381") != s.number.startswith("AV-")
+        or (s.type_code == "381") != is_credit_note_number(s.number)
         or (s.type_code == "381" and not s.original_invoice_number)
     ):
         raise IntegrityRefusedError("document_snapshot_invalid")

@@ -439,6 +439,7 @@ def _identity(
         organisation.state != "active"
         or organisation.deleted_at is not None
         or verified.issuer != organisation.issuer
+        or organisation.oidc_audience not in verified.audience
         or not verified.email_verified
         or not is_storable_subject(verified.subject)
     ):

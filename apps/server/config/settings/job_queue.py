@@ -22,6 +22,7 @@ import os
 
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
+    credit_note_series_from_environment,
     issuer_from_environment as billing_issuer,
     series_from_environment as billing_series,
 )
@@ -120,6 +121,9 @@ KODERA_REALM_SETUP_REDIRECT = setup_redirect_from_environment(os.environ, KODERA
 # The legal entity that issues invoices, and the invoice number series (apps/billing/configuration.py).
 KODERA_BILLING_ISSUER = billing_issuer(os.environ)
 KODERA_INVOICE_SERIES = billing_series(os.environ)
+KODERA_CREDIT_NOTE_SERIES = credit_note_series_from_environment(
+    os.environ, invoice_series=KODERA_INVOICE_SERIES
+)
 KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 
 # BILLING_MODEL.md §4.1: `cancel_unpaid_orders` ends unpaid orders and credits their invoices. Off

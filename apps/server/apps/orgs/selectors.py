@@ -8,6 +8,7 @@ from django.db import connection
 from django.db.models import Q, QuerySet
 
 from apps.identity.selectors import lock_user_fence, person_identities
+from services.identity.access_tokens import AUDIENCE
 
 from .models import Membership, Organisation
 
@@ -71,7 +72,12 @@ def current_members(*, organisation_id: UUID) -> dict[UUID, tuple[UUID, str]]:
 
 
 def has_current_read_grant(
-    *, user_id: UUID, organisation_id: UUID, issuer: str, realm: str
+    *,
+    user_id: UUID,
+    organisation_id: UUID,
+    issuer: str,
+    realm: str,
+    audience: tuple[str, ...] = (AUDIENCE,),
 ) -> bool:
     return (
         _current_memberships(user_id=user_id, organisation_id=organisation_id)
@@ -79,6 +85,7 @@ def has_current_read_grant(
             organisation__deleted_at__isnull=True,
             organisation__state__in=[Organisation.State.ACTIVE, Organisation.State.SUSPENDED],
             organisation__issuer=issuer,
+            organisation__oidc_audience__in=audience,
             organisation__realm=realm,
         )
         .exists()

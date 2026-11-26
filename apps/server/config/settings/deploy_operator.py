@@ -10,7 +10,10 @@ key. Loading command help never reads such a key. This profile routes nothing.
 
 import os
 
-from apps.billing.configuration import series_from_environment as billing_series
+from apps.billing.configuration import (
+    credit_note_series_from_environment,
+    series_from_environment as billing_series,
+)
 from apps.outbox.mail.links import origins_from_environment, setup_redirect_from_environment
 from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
@@ -82,12 +85,17 @@ KODERA_APP_ORIGIN = app_origin(os.environ)
 KODERA_AUTH_TRUST = auth_trust(os.environ)
 KODERA_STAFF_ISSUER = staff_issuer(os.environ)
 KODERA_INTAKE_ADMITTED = intake_admitted(os.environ)
-# Billing's staff command numbers its credit note in `AV-` and the invoices' series, which must be
-# the API's own: one counter per series, gapless. So the series is read only when given, through
-# the API's validator, and never defaulted; unset, settle_complimentary_order refuses before it
-# reads anything. The tenant line it prints reads the API's application URL templates.
+# Operator issuance uses the API's configured document series and counters. An invoice
+# series must be explicit here; unset, settlement refuses before reading business rows.
 KODERA_INVOICE_SERIES = (
-    billing_series(os.environ) if os.environ.get("KODERA_INVOICE_SERIES") else None
+    billing_series(os.environ)
+    if os.environ.get("KODERA_INVOICE_SERIES") or os.environ.get("KODERA_INVOICE_PREFIX")
+    else None
+)
+KODERA_CREDIT_NOTE_SERIES = (
+    credit_note_series_from_environment(os.environ, invoice_series=KODERA_INVOICE_SERIES)
+    if KODERA_INVOICE_SERIES is not None
+    else None
 )
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).

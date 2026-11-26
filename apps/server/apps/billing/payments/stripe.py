@@ -130,6 +130,12 @@ class StripeProvider:
         *,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        if method == "POST" and path == "/checkout/sessions":
+            if [value for key, value in params if key == "mode"] != ["payment"] or any(
+                key.startswith(("invoice_creation", "automatic_tax", "subscription_data"))
+                for key, _value in params
+            ):
+                raise ValueError("Checkout must preserve Core invoice and tax authority")
         body = urllib.parse.urlencode(params).encode()
         headers = {
             "Authorization": f"Bearer {self._secret_key}",
@@ -390,6 +396,11 @@ def _translate(
     kind: str, event_id: str, occurred_at: datetime, data: Mapping[str, Any]
 ) -> ProviderEvent | None:
     if kind.startswith("checkout.session."):
+        if (
+            kind == "checkout.session.async_payment_succeeded"
+            and data.get("payment_status") != "paid"
+        ):
+            return None
         port_kind = {
             # Paid by card at once; a SEPA debit is submitted now and settles later.
             "checkout.session.completed": (

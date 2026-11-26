@@ -755,14 +755,16 @@ class InvoiceLine(AccountingRetention):
 # date (BILLING_MODEL.md §4.1), settled as complimentary by a staff operator (§4.2), or refunded
 # partially or in full after payment (`refund`).
 CREDIT_NOTE_REASONS = ("customer_cancellation", "unpaid_lapse", "complimentary", "refund")
-CREDIT_NOTE_NUMBER = r"^AV-[A-Z]{2,8}(-[A-Z]{2,8})?-[0-9]{4}-[0-9]{5}$"
+CREDIT_NOTE_NUMBER = (
+    r"^(AV-(?!AV)[A-Z]{2,8}(-(?!AV-)[A-Z]{2,8})?|(?!AV)[A-Z]{2,8}-AV)-[0-9]{4}-[0-9]{5}$"
+)
 
 
 class CreditNote(StoredModel, AccountingRetention):
     """The only correction of an issued invoice (docs/domain/BILLING_MODEL.md §4): numbered from a
-    series of its own (`AV-<series>`), dated, with the invoice's VAT treatment and both parties'
-    snapshot copied from it, and never changed or deleted. For now a credit note credits its
-    invoice in full, once: the invoice is then `credited`."""
+    series of its own, dated, with the invoice's VAT treatment and both parties' snapshot copied
+    from it, and never changed or deleted. Cancellations credit the invoice in full once; provider
+    refunds issue partial notes without changing the reopened debt."""
 
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
@@ -802,8 +804,13 @@ class CreditNote(StoredModel, AccountingRetention):
             # bounded by the deferred `billing_creditnote_complete` sum trigger.
             models.UniqueConstraint(
                 fields=["invoice"],
-                condition=~Q(reason="refund"),
+                condition=Q(invoice__isnull=False) & ~Q(reason="refund"),
                 name="billing_creditnote_one_per_invoice",
+            ),
+            models.UniqueConstraint(
+                fields=["external_ref"],
+                condition=Q(reason="refund", external_ref__isnull=False),
+                name="billing_creditnote_refund_external_unique",
             ),
             models.CheckConstraint(
                 name="billing_creditnote_number_valid",

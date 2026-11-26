@@ -84,6 +84,7 @@ def read_customer(
                 organisation_id=cand_identity.organisation_id,
                 issuer=cand_identity.issuer,
                 realm=cand_identity.realm,
+                audience=verified.audience,
             ):
                 person = cand_person
                 identity = cand_identity

@@ -70,6 +70,7 @@ class Organisation(RetainedModel):
     slug = models.TextField()
     realm = models.TextField()
     issuer = models.TextField()
+    oidc_audience = models.TextField(default="kodera-server", db_default="kodera-server")
     name = models.TextField()
     state = models.TextField(choices=State.choices, default=State.PROSPECT)
     owner_guard_revision = models.BigIntegerField(default=0)
@@ -125,6 +126,10 @@ class Organisation(RetainedModel):
             models.CheckConstraint(
                 name="organisation_slug_not_synthetic",
                 condition=~models.Q(slug__startswith=SYNTHETIC_ORGANISATION_PREFIX),
+            ),
+            models.CheckConstraint(
+                name="organisation_oidc_audience_valid",
+                condition=models.Q(oidc_audience__regex=r"^[!-~]{1,255}$"),
             ),
             models.CheckConstraint(
                 name="organisation_issuer_valid",
