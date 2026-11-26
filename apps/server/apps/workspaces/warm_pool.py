@@ -29,9 +29,39 @@ CUSTOM_CHANNEL_KEY_PATTERN = re.compile(r"^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$")
 ADDITIONAL_CHANNEL_NAME_RE = re.compile(
     r"^[\x20-\x7e\u00a0-\u00ac\u00ae-\u024f]*[A-Za-z0-9][\x20-\x7e\u00a0-\u00ac\u00ae-\u024f]*$"
 )
-# Both namespaces can name first-party hosts; instant claim must reserve their union.
+# Both claim flows share the console's root namespace. Punctuation-led routes such as
+# /.well-known and /_matrix are already excluded by both slug grammars.
 RESERVED_SLUGS = (
-    frozenset(RESERVED_ORGANISATION_SLUGS) | frozenset(RESERVED_TENANT_SLUGS) | {"login"}
+    RESERVED_ORGANISATION_SLUGS
+    | RESERVED_TENANT_SLUGS
+    | {
+        "agent",
+        "assets",
+        "booking",
+        "callback",
+        "claim",
+        "developer-docs",
+        "docs",
+        "documents",
+        "espace",
+        "health",
+        "healthz",
+        "invitations",
+        "invite",
+        "invites",
+        "join",
+        "login",
+        "logout",
+        "order",
+        "pricing",
+        "privacy",
+        "realms",
+        "rtc",
+        "security",
+        "settings",
+        "worklets",
+        "workspaces",
+    }
 )
 HOSTING_MODES = frozenset({"cloud", "self-host"})
 SOUND_PACK_IDS = frozenset(
@@ -338,6 +368,10 @@ def parse_template_customization(
     return customization
 
 
+def workspace_slug_is_reserved(slug: str) -> bool:
+    return slug in RESERVED_SLUGS or slug.startswith(("xn--", "synth-"))
+
+
 def parse_instant_claim_request(
     raw: bytes, content_type: str = "application/json"
 ) -> InstantClaimRequest:
@@ -364,7 +398,7 @@ def parse_instant_claim_request(
     if "slug" in body:
         if not isinstance(slug, str) or not SLUG_PATTERN.fullmatch(slug):
             errors.append(("/slug", "invalid"))
-        elif slug in RESERVED_SLUGS or slug.startswith(("xn--", "synth-")):
+        elif workspace_slug_is_reserved(slug):
             errors.append(("/slug", "reserved"))
 
     hosting_mode = body.get("hostingMode")

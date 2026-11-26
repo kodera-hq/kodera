@@ -25,6 +25,7 @@ from config.environment import (
     ai_client_ids,
     ai_mistral_api_key,
     android_assetlinks_sha256,
+    app_origin,
     auth_trust,
     billing_enabled,
     console_client_id,
@@ -37,6 +38,7 @@ from config.environment import (
     matrix_domain_suffix,
     matrix_replay_transport_factory,
     mutation_rate_per_minute,
+    self_serve_disposable_domains,
     staff_admin_hosts,
     staff_oidc_issuer,
     staff_oidc_jwks_url,
@@ -86,6 +88,8 @@ INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False
 # here unless config.settings.test, config.settings.e2e or config.settings.e2e_operator is selected.
 # Every other selected profile refuses a loopback issuer.
+KODERA_SELF_SERVE_DISPOSABLE_DOMAINS = self_serve_disposable_domains(os.environ)
+KODERA_APP_ORIGIN = app_origin(os.environ)
 KODERA_AUTH_TRUST = auth_trust(os.environ, loopback_issuers=KODERA_LOOPBACK_ISSUERS)
 KODERA_CONSOLE_CLIENT_ID = console_client_id(os.environ)
 

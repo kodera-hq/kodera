@@ -17,6 +17,7 @@ from apps.outbox.mail.transport import transport_from_environment
 from apps.outbox.realm.keycloak import origins_from_environment as realm_origins_from_environment
 from config.deploy_environment import operator_deployment
 from config.environment import (
+    app_origin,
     auth_trust,
     billing_enabled,
     ee_audit_signing_seed,
@@ -77,6 +78,7 @@ INSTALLED_APPS = [
 ]
 
 KODERA_LOOPBACK_ISSUERS = False
+KODERA_APP_ORIGIN = app_origin(os.environ)
 KODERA_AUTH_TRUST = auth_trust(os.environ)
 KODERA_STAFF_ISSUER = staff_issuer(os.environ)
 KODERA_INTAKE_ADMITTED = intake_admitted(os.environ)

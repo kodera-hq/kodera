@@ -4,6 +4,12 @@ Provisions `Organisation(shared_realm=True, plan_tier='freemium_pme')`, permanen
 `SlugReservation`, `Identity`, `Membership(role='org_owner')`, `Tenant(status='active')`,
 starter `Workspace` (`#welcome`, `#general`, `#lounge`), and `WorkspaceQuota(seats=5)`
 in a single atomic database transaction with zero cloud/Keycloak credentials (`ADR-0003`).
+
+At Milestone A, KODERA_BILLING_ENABLED=false refuses new Sovereign orders with
+409 billing-disabled. Cardless signup remains available. Its redirect_path is local to
+the console. The 201 Location uses KODERA_APP_ORIGIN when configured. For invitation
+mail, configure that origin on the sender and include it in KODERA_MAIL_LINK_ORIGINS.
+KODERA_SELF_SERVE_DISPOSABLE_DOMAINS extends the built-in list with comma-separated domains.
 """
 
 from __future__ import annotations
@@ -30,7 +36,6 @@ from apps.orgs.intake_services import (
     SLUG,
     held_organisation_or_reservation_slugs,
     is_organisation_or_reservation_slug_taken,
-    is_reserved_slug,
     provision_self_serve_organisation_and_owner,
 )
 from apps.orgs.selectors import count_active_freemium_owned_organisations
@@ -38,10 +43,10 @@ from apps.tenancy.services import (
     create_active_self_serve_tenant,
     held_tenant_slugs,
     tenant_slug_exists,
-    tenant_slug_is_reserved,
 )
 from apps.workspaces.initialise import create_starter
 from apps.workspaces.services import sync_subscription_quota
+from apps.workspaces.warm_pool import workspace_slug_is_reserved
 from core.api import lanes
 from core.passport import (
     PASSPORT_SESSION_PREFIX,
@@ -54,6 +59,16 @@ from services.identity.trusted_issuers import is_trusted_issuer, verify_configur
 FREEMIUM_POLICY_REF = "freemium:pme:seats-5"
 FREEMIUM_SEAT_LIMIT = 5
 MAX_ACTIVE_FREEMIUM_ORGS_PER_PERSON = 3
+DISPOSABLE_EMAIL_DOMAINS = frozenset(
+    {
+        "10minutemail.com",
+        "guerrillamail.com",
+        "guerrillamail.net",
+        "mailinator.com",
+        "sharklasers.com",
+        "yopmail.com",
+    }
+)
 NAME_MAX_LENGTH = 120
 SUGGESTION_SUFFIXES = tuple(f"-{n}" for n in range(2, 12))
 MAX_ORG_SLUG_LENGTH = 20
@@ -133,6 +148,20 @@ def _realm_from_issuer(issuer: str) -> str | None:
     return None if matched is None else matched.group(1)
 
 
+def _signup_email(raw: str) -> str:
+    email = raw.strip()
+    try:
+        validate_email(email)
+        domain = email.rsplit("@", 1)[-1].encode("idna").decode("ascii").lower().rstrip(".")
+    except (ValidationError, UnicodeError):
+        raise SelfServeAuthForbiddenError() from None
+    blocked = DISPOSABLE_EMAIL_DOMAINS | settings.KODERA_SELF_SERVE_DISPOSABLE_DOMAINS
+    labels = domain.split(".")
+    if any(".".join(labels[i:]) in blocked for i in range(len(labels))):
+        raise SelfServeAuthForbiddenError()
+    return email
+
+
 def authorise_self_serve_caller(*, verified: VerifiedAccessToken, lane: str) -> SelfServeCaller:
     """Verify caller holds a verified-email OIDC token from `default_community_issuer()`."""
     if lane != "customer":
@@ -154,16 +183,11 @@ def authorise_self_serve_caller(*, verified: VerifiedAccessToken, lane: str) -> 
         or len(verified.email.strip()) > 254
     ):
         raise SelfServeAuthForbiddenError()
-    email = verified.email.strip()
-    try:
-        validate_email(email)
-    except ValidationError:
-        raise SelfServeAuthForbiddenError() from None
     return SelfServeCaller(
         issuer=shared_issuer,
         realm=realm,
         subject=verified.subject,
-        email=email,
+        email=_signup_email(verified.email),
     )
 
 
@@ -192,7 +216,7 @@ def resolve_self_serve_caller_from_token(token: str) -> SelfServeCaller:
             issuer=ident.issuer,
             realm=ident.realm,
             subject=ident.subject,
-            email=person.email,
+            email=_signup_email(person.email),
         )
 
     verified, lane = verify_configured_token(token, trusted=settings.KODERA_AUTH_TRUST)
@@ -228,7 +252,7 @@ def parse_self_serve_request(body: dict[str, Any]) -> SelfServeRequest:
     elif not SLUG.fullmatch(raw_slug):
         errors.append({"pointer": "/slug", "code": "format"})
         slug = ""
-    elif is_reserved_slug(raw_slug) or tenant_slug_is_reserved(raw_slug):
+    elif workspace_slug_is_reserved(raw_slug):
         errors.append({"pointer": "/slug", "code": "slug_reserved"})
         slug = ""
     else:
@@ -253,8 +277,7 @@ def _slug_suggestions(base_slug: str) -> list[str]:
         candidate = f"{trimmed}{suffix}"
         if (
             SLUG.fullmatch(candidate)
-            and not is_reserved_slug(candidate)
-            and not tenant_slug_is_reserved(candidate)
+            and not workspace_slug_is_reserved(candidate)
             and candidate not in candidates
         ):
             candidates.append(candidate)
