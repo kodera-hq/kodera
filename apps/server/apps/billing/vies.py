@@ -17,7 +17,9 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.db import transaction
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
 from .models import BillingProfile, ViesConsultation
@@ -142,21 +144,35 @@ def consult(
 
 
 def record_consultation(
-    *, organisation_id: UUID, country_code: str, vat_number: str, answer: Answer
+    *,
+    organisation_id: UUID,
+    country_code: str,
+    vat_number: str,
+    answer: Answer,
+    clock: Callable[[], datetime] = timezone.now,
 ) -> ViesConsultation:
     normalise(country_code, vat_number)
-    now = timezone.now()
+    now = clock()
     with transaction.atomic():
         profile = BillingProfile.objects.select_for_update().get(organisation_id=organisation_id)
         if profile.country != country_code or profile.vat_number != vat_number:
             raise ViesRefusedError("billing_profile_changed")
+        current = current_consultation(profile)
+        if current is not None:
+            now = max(now, current.checked_at + timedelta(microseconds=1))
         row = ViesConsultation.objects.create(
             organisation_id=organisation_id,
             country_code=country_code,
             vat_number=vat_number,
             status=answer.status,
             checked_at=now,
-            next_check_at=now + (RETRY_AFTER if answer.status == "unavailable" else VALID_FOR),
+            next_check_at=now
+            + (
+                RETRY_AFTER
+                * (2 ** min(4, max(0, int(answer.evidence.get("retry_attempt", 1)) - 1)))
+                if answer.status == "unavailable"
+                else VALID_FOR
+            ),
             consultation_ref=answer.consultation_ref,
             response_sha256=answer.response_sha256,
             evidence=answer.evidence,
@@ -206,3 +222,122 @@ def profile_matches(*, organisation_id: UUID, country_code: str, vat_number: str
     return BillingProfile.objects.filter(
         organisation_id=organisation_id, country=country_code, vat_number=vat_number
     ).exists()
+
+
+def _unexpired_proof(current: ViesConsultation | None, now: datetime) -> bool:
+    return (
+        current is not None
+        and current.status == "valid"
+        and now < current.next_check_at
+        and current.checked_at <= now + timedelta(minutes=5)
+    )
+
+
+def consult_with_proof_cache(
+    *,
+    organisation_id: UUID,
+    country_code: str,
+    vat_number: str,
+    opener: Transport | None = None,
+    clock: Callable[[], datetime] = timezone.now,
+) -> ViesConsultation:
+    """Consult without row locks, then serialize persistence against profile changes."""
+    normalise(country_code, vat_number)
+    profile = BillingProfile.objects.get(organisation_id=organisation_id)
+    if profile.country != country_code or profile.vat_number != vat_number:
+        raise ViesRefusedError("billing_profile_changed")
+    current = current_consultation(profile)
+    if current is not None and _unexpired_proof(current, clock()):
+        return current
+    issuer = getattr(settings, "KODERA_BILLING_ISSUER", None)
+    requester = getattr(issuer, "vat_number", None)
+    if not requester:
+        from .issuer_validation import validate_issuer
+
+        requester = validate_issuer().get("VAT_NUMBER")
+    if not requester:
+        raise ViesRefusedError("vies_requester_not_configured")
+    answer = consult(
+        country_code=country_code,
+        vat_number=vat_number,
+        requester=requester,
+        transport=opener if opener is not None else _transport,
+        clock=clock,
+    )
+    with transaction.atomic():
+        profile = BillingProfile.objects.select_for_update().get(organisation_id=organisation_id)
+        if profile.country != country_code or profile.vat_number != vat_number:
+            raise ViesRefusedError("billing_profile_changed")
+        current = current_consultation(profile)
+        if current is not None and _unexpired_proof(current, clock()):
+            return current
+        if answer.status == "unavailable":
+            previous = (
+                0
+                if current is None or current.status != "unavailable"
+                else current.evidence.get("retry_attempt", 0)
+            )
+            attempt = min(5, previous + 1) if type(previous) is int and previous >= 0 else 1
+            answer = Answer(
+                answer.status,
+                answer.consultation_ref,
+                {**answer.evidence, "retry_attempt": attempt},
+                answer.response_sha256,
+            )
+        return record_consultation(
+            organisation_id=organisation_id,
+            country_code=country_code,
+            vat_number=vat_number,
+            answer=answer,
+            clock=clock,
+        )
+
+
+def retry_due_consultations(
+    *,
+    limit: int = 50,
+    opener: Transport | None = None,
+    clock: Callable[[], datetime] = timezone.now,
+) -> list[ViesConsultation]:
+    """Retry only each profile's latest due proof with bounded work and no HTTP row lock."""
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ViesRefusedError("vies_retry_limit_invalid")
+    latest = (
+        ViesConsultation.objects.filter(
+            organisation_id=OuterRef("organisation_id"),
+            country_code=OuterRef("country_code"),
+            vat_number=OuterRef("vat_number"),
+        )
+        .order_by("-checked_at", "-id")
+        .values("id")[:1]
+    )
+    due = list(
+        ViesConsultation.objects.filter(id=Subquery(latest), next_check_at__lte=clock())
+        .exclude(country_code="FR")
+        .order_by("next_check_at", "id")
+        .values_list("organisation_id", "country_code", "vat_number")[:limit]
+    )
+    rows = []
+    for organisation_id, country_code, vat_number in due:
+        profile = BillingProfile.objects.filter(
+            organisation_id=organisation_id, country=country_code, vat_number=vat_number
+        ).first()
+        if profile is None:
+            continue
+        current = current_consultation(profile)
+        if current is None or current.next_check_at > clock():
+            continue
+        try:
+            rows.append(
+                consult_with_proof_cache(
+                    organisation_id=organisation_id,
+                    country_code=country_code,
+                    vat_number=vat_number,
+                    opener=opener,
+                    clock=clock,
+                )
+            )
+        except ViesRefusedError:
+            # A profile changed after selection; obsolete identities must not be persisted.
+            continue
+    return rows

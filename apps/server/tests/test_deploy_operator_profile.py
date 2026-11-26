@@ -84,6 +84,7 @@ COMMANDS = [
     "confirm_dunning_action",
     "record_billing_dispute",
     "render_billing_document",
+    "retry_vies_consultations",
     "load_catalogue",
     "send_order_confirmations",
     "settle_complimentary_order",

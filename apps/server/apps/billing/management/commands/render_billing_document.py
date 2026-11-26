@@ -22,15 +22,17 @@ class Command(BaseCommand):
         require_operator_profile()
         from apps.billing.artifacts import publish
         from apps.billing.integrity import IntegrityRefusedError
+        from apps.billing.issuer_validation import validate_issuer
         from apps.billing.rendering import OfflineRenderer, OfflineValidator
 
         try:
+            validate_issuer()
             artifact = publish(
                 document_id=options["invoice"] or options["credit_note"],
                 credit_note=options["credit_note"] is not None,
                 renderer=OfflineRenderer(),
                 validator=OfflineValidator(verapdf=options["verapdf"]),
-                validator_ref="verapdf-1.30.2/factur-x-7.9/saxonche-13.1.1/en16931",
+                validator_ref="verapdf-1.30.2/factur-x-en16931/xsd/schematron",
             )
         except IntegrityRefusedError as refused:
             raise CommandError(f"billing document refused: {refused}") from None

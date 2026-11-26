@@ -105,6 +105,7 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_EE_AUDIT_SIGNING_SEED",  # application audit-export signing seed
         "KODERA_STRIPE_SECRET_KEY",  # a restricted key, apps/billing/configuration.py
         "KODERA_STRIPE_WEBHOOK_SECRET",
+        "KODERA_QONTO_PA_TOKEN",  # enterprise e-invoicing application token, read outside settings
         "KODERA_MAIL_SMTP_PASSWORD",  # transactional mail, the operator's sender
         "KODERA_SYNAPSE_ADMIN_TOKEN",  # optional Matrix worker homeserver admin access token
         "KODERA_LIVEKIT_API_KEY",  # optional LiveKit RoomService API key for authoritative call rosters

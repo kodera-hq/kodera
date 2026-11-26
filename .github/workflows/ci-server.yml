@@ -141,7 +141,7 @@ jobs:
           python-version: "3.12"
       - name: Sync locked Python dependencies
         working-directory: apps/server
-        run: uv sync --locked
+        run: uv sync --locked --extra billing-documents
       - name: Ruff, Mypy & Architectural Policy Gates
         working-directory: apps/server
         run: |
@@ -232,7 +232,7 @@ jobs:
           python-version: "3.12"
       - name: Sync locked Python dependencies
         working-directory: apps/server
-        run: uv sync --locked
+        run: uv sync --locked --extra billing-documents
       - name: Configure ephemeral PostgreSQL (fsync = off) and wait for reload
         env:
           PGPASSWORD: kodera
