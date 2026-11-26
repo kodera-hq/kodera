@@ -13,6 +13,8 @@ import {
   RADIX_SELECT_VIEWPORT_RULE,
   radixSelectViewportStylePlugin,
   stripRadixSelectViewportStyle,
+  stripRadixToastViewportStyle,
+  stripRadixRovingFocusStyle,
 } from '../../../scripts/vite/radixSelectViewportStyle'
 
 const packageDirectory = dirname(
@@ -72,5 +74,49 @@ describe('the inline style element Radix Select renders', () => {
       ),
     ].map((match) => compact(`${match[1]}{${match[2]!.replace(/\/\*[\s\S]*?\*\//g, '')}}`))
     expect(rules.join('')).toBe(RADIX_SELECT_VIEWPORT_RULE.replace(/}$/, ';}'))
+  })
+})
+
+describe('the toast viewport pointer-event state', () => {
+  it.each(['index.mjs', 'index.js'])('uses a static class in the installed %s bundle', (name) => {
+    const directory = dirname(
+      dirname(createRequire(import.meta.url).resolve('@radix-ui/react-toast'))
+    )
+    const id = join(directory, 'dist', name)
+    const source = readFileSync(id, 'utf8')
+    const transform = radixSelectViewportStylePlugin().transform as (
+      code: string,
+      id: string
+    ) => { code: string }
+    const result = transform.call({}, source, id).code
+    expect(result).toContain('className: hasToasts ? void 0 : "csp-toast-empty"')
+    expect(result).not.toContain('style: { pointerEvents: hasToasts')
+    expect(STYLESHEET).toMatch(/\.csp-toast-empty\s*\{\s*pointer-events: none;/)
+    expect(() =>
+      stripRadixToastViewportStyle(source.replace('hasToasts ? void 0 : "none"', '"none"'))
+    ).toThrow(/exactly one/)
+    expect(() => stripRadixToastViewportStyle(source + source)).toThrow(/exactly one/)
+  })
+})
+
+describe('the roving focus outline', () => {
+  it.each(['index.mjs', 'index.js'])('uses a static class in the installed %s bundle', (name) => {
+    const directory = dirname(
+      dirname(createRequire(import.meta.url).resolve('@radix-ui/react-roving-focus'))
+    )
+    const id = join(directory, 'dist', name)
+    const source = readFileSync(id, 'utf8')
+    const transform = radixSelectViewportStylePlugin().transform as (
+      code: string,
+      id: string
+    ) => { code: string }
+    const result = transform.call({}, source, id).code
+    expect(result).toContain('className: [groupProps.className, "csp-roving-focus"]')
+    expect(result).not.toContain('style: { outline: "none"')
+    expect(STYLESHEET).toMatch(/\.csp-roving-focus\s*\{\s*outline: none;/)
+    expect(() =>
+      stripRadixRovingFocusStyle(source.replace('outline: "none"', 'outline: "auto"'))
+    ).toThrow(/exactly one/)
+    expect(() => stripRadixRovingFocusStyle(source + source)).toThrow(/exactly one/)
   })
 })

@@ -1,3 +1,4 @@
+import { holdTelemetryForConfidentialContext } from '../../analytics/telemetry/consent'
 import type { DriveDocumentRequest } from '../docs/DriveWorkspaceContext'
 import { SimpleMessagingSidebar } from './SimpleMessagingSidebar'
 import { KoderaIcon } from '../../ui/icons/KoderaIcons'
@@ -86,6 +87,8 @@ import {
   composing,
   isProximityChannel,
   NO_MESSAGES,
+  noCallSnapshot,
+  subscribeToNoCall,
   profileRoleIn,
   roomForChannel,
   roomResolved,
@@ -173,7 +176,7 @@ export interface EspaceLiveViewProps {
   readonly canvasRequestKey?: number | undefined
   readonly onUpdateChannelDocument?:
     ((channelId: string, id: string, patch: { title: string; content: string }) => void) | undefined
-  readonly onChangeCanvasMode?: ((mode: CanvasMode) => void) | undefined
+  readonly onChangeCanvasMode?: ((mode: CanvasMode, telemetryAllowed?: boolean) => void) | undefined
   readonly documents?: readonly ChannelDoc[]
   readonly collections?: readonly OmniboxCollectionDescriptor[] | undefined
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
@@ -259,6 +262,10 @@ export function EspaceLiveView(props: EspaceLiveViewProps) {
       })
   }, [memory, props.session, props.workspace, props.store, stamp, allowed, sameView, committedView])
   useLayoutEffect(() => () => committedView.commit(null), [committedView])
+  // A rejected view has no mounted room observer. Keep its entire fallback protected.
+  useLayoutEffect(() => {
+    if (!allowed) return holdTelemetryForConfidentialContext()
+  }, [allowed])
   if (!allowed)
     return <InlineAlert kind="error">{t('console.workspace.live.problem-unavailable')}</InlineAlert>
   return (
@@ -497,7 +504,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setFullStage(false)
       setLocalCallsOpen(false)
       setLocalCanvasMode('chat')
-      onChangeCanvasMode?.('chat')
+      const targetBoundary = activeStore.getRoomBoundary?.(roomId) ?? 'unknown'
+      onChangeCanvasMode?.('chat', permitsPlaintext(targetBoundary))
       setDirect({ roomId, over: selectedChannelId })
     }
   )
@@ -506,7 +514,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   const activeRoomId = activeRoom?.roomId ?? null
   const roomBoundary =
-    activeRoomId === null ? undefined : activeStore.getRoomBoundary?.(activeRoomId)
+    directRoomId !== null
+      ? (activeStore.getRoomBoundary?.(directRoomId) ?? 'unknown')
+      : activeRoomId === null
+        ? undefined
+        : activeStore.getRoomBoundary?.(activeRoomId)
   const protectionUnavailable = roomBoundary !== undefined && !permitsPlaintext(roomBoundary)
   const activeDirect =
     directRoomId === null
@@ -803,7 +815,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setFullStage(false)
       setLocalCallsOpen(false)
       setLocalCanvasMode('chat')
-      onChangeCanvasMode?.('chat')
+      const target = workspace.categories
+        .flatMap((category) => category.channels)
+        .concat(workspace.uncategorised_channels)
+        .find((channel) => channel.id === nextChannelId)
+      onChangeCanvasMode?.('chat', target?.is_confidential !== true)
       if (onNavigateChannel === undefined) {
         setClickedChannelId(nextChannelId)
         return
@@ -867,9 +883,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       closeChannelChooser()
       setLocalCallsOpen(false)
       setLocalCanvasMode('chat')
-      onChangeCanvasMode?.('chat')
+      const boundary = room === undefined ? undefined : activeStore.getRoomBoundary?.(room.roomId)
+      onChangeCanvasMode?.(
+        'chat',
+        !channel.is_confidential && boundary !== undefined && permitsPlaintext(boundary)
+      )
       if (activeCall === null || room === undefined) return
-      const boundary = activeStore.getRoomBoundary?.(room.roomId)
       if (
         boundary !== undefined &&
         !permitsPlaintext(boundary) &&
@@ -1200,6 +1219,29 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     activeDocsIsConfidential,
     onActiveChannelBoundaryChange,
   ])
+
+  const callRoomId = useStoreSlice(
+    activeCall?.subscribe ?? subscribeToNoCall,
+    activeCall?.getSnapshot ?? noCallSnapshot,
+    (call) => call.roomId
+  )
+  const callBoundary = inLiveCall
+    ? (activeStore.getRoomBoundary?.(callRoomId ?? callChannel?.roomId ?? '') ?? 'unknown')
+    : undefined
+  const callIsConfidential =
+    inLiveCall &&
+    workspace.categories
+      .flatMap((category) => category.channels)
+      .concat(workspace.uncategorised_channels)
+      .some((channel) => channel.id === callChannel?.channelId && channel.is_confidential)
+  const telemetryHeld =
+    activeDocsIsConfidential ||
+    (activeDocsBoundary !== undefined && !permitsPlaintext(activeDocsBoundary)) ||
+    callIsConfidential ||
+    (callBoundary !== undefined && !permitsPlaintext(callBoundary))
+  useLayoutEffect(() => {
+    if (telemetryHeld) return holdTelemetryForConfidentialContext()
+  }, [telemetryHeld])
 
   if (requestedDriveDocument) {
     const source = snapshot.channels.get(requestedDriveDocument.channelId)

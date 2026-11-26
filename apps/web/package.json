@@ -19,6 +19,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:visual": "bash scripts/visual.sh",
     "test:smoke": "playwright test -c playwright.smoke.config.ts",

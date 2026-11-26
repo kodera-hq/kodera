@@ -1,3 +1,4 @@
+import { isTelemetryConfidentiallyHeld } from '../../analytics/telemetry/consent'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
@@ -4333,6 +4334,7 @@ it('allows protected audio through a call controller with an active media capabi
   )
   await userEvent.setup().click(screen.getByRole('button', { name: /Join Point quotidien/ }))
   expect(call.join).toHaveBeenCalledWith(STANDUP_ROOM)
+  expect(isTelemetryConfidentiallyHeld()).toBe(true)
 })
 
 it.each(['docs', 'files'] as const)(
@@ -4357,7 +4359,7 @@ it.each(['docs', 'files'] as const)(
       </QueryClientProvider>
     )
     await userEvent.setup().click(screen.getByRole('link', { name: /^général/ }))
-    expect(change).toHaveBeenCalledWith('chat')
+    expect(change).toHaveBeenCalledWith('chat', expect.any(Boolean))
     expect(navigate).toHaveBeenCalledWith(GENERAL)
   }
 )
@@ -4382,7 +4384,7 @@ it('returns from Docs to chat on an audio selection even when protection prevent
   await userEvent
     .setup()
     .click(screen.getByRole('button', { name: 'Rejoindre Point quotidien, 2 personnes' }))
-  expect(change).toHaveBeenCalledWith('chat')
+  expect(change).toHaveBeenCalledWith('chat', expect.any(Boolean))
   expect(call.join).not.toHaveBeenCalled()
 })
 
@@ -4410,7 +4412,7 @@ it.each(['docs', 'files'] as const)(
       </QueryClientProvider>
     )
     await userEvent.setup().click(screen.getByRole('button', { name: 'Alice' }))
-    expect(change).toHaveBeenCalledWith('chat')
+    expect(change).toHaveBeenCalledWith('chat', expect.any(Boolean))
   }
 )
 
@@ -4505,4 +4507,35 @@ it('preserves direct selection and withholds the previous channel composer acros
   expect(screen.queryByRole('heading', { level: 1, name: /general/ })).toBeNull()
   expect(screen.queryByRole('textbox', { name: /message/i })).not.toBeInTheDocument()
   expect(store.send).not.toHaveBeenCalled()
+})
+
+it('holds telemetry while an accepted direct room has not arrived in joined sync', async () => {
+  const store = makeFakeStore()
+  store.getDirects = () => []
+  store.acceptInvite = vi.fn(async () => undefined)
+  const snapshot = store.getSnapshot()
+  store.getSnapshot = () => snapshot
+  snapshot.invites = [
+    {
+      roomId: '!pending:example.test',
+      name: 'Alice',
+      inviter: '@alice:example.test',
+      direct: true,
+    },
+  ]
+  const view = render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+    />
+  )
+  expect(isTelemetryConfidentiallyHeld()).toBe(false)
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Accepter et rejoindre' }))
+  await waitFor(() => expect(store.acceptInvite).toHaveBeenCalled())
+  expect(isTelemetryConfidentiallyHeld()).toBe(true)
+  view.unmount()
+  expect(isTelemetryConfidentiallyHeld()).toBe(false)
 })

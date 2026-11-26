@@ -739,3 +739,24 @@
     display: flex;
   }
 }
+
+/* Roving-focus containers pass keyboard focus to their children. */
+.csp-toast-empty {
+  pointer-events: none;
+}
+
+.csp-roving-focus {
+  outline: none;
+}
+
+/* Token-based clearance for browsers without constructable stylesheets. */
+.shell-header-height-fallback {
+  --shell-header-block: calc(
+    var(--sp-shell-header-height) + var(--sp-2) + env(safe-area-inset-top, 0px)
+  );
+}
+.shell-tab-height-fallback {
+  --shell-tab-bar-block: calc(
+    var(--sp-shell-header-height) + var(--sp-2) + env(safe-area-inset-bottom, 0px)
+  );
+}

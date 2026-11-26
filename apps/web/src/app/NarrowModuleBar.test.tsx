@@ -9,7 +9,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -26,6 +26,7 @@ vi.mock('./tenantApplications', async (importOriginal) => ({
 
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  document.adoptedStyleSheets = []
   tenant.apps = []
 })
 
@@ -138,7 +139,15 @@ describe("the workspace's tab bar on a phone (G11)", () => {
   it('publishes its height for the toasts and focused controls to clear', async () => {
     await openAt('/acme-sa/workspace')
 
-    expect(document.documentElement.style.getPropertyValue('--shell-tab-bar-block')).not.toBe('')
+    const rules = document.adoptedStyleSheets.flatMap((sheet) => [...sheet.cssRules])
+    expect(
+      rules.some(
+        (rule) => (rule as CSSStyleRule).style.getPropertyValue('--shell-tab-bar-block') !== ''
+      )
+    ).toBe(true)
+    expect(document.documentElement).not.toHaveAttribute('style')
+    cleanup()
+    expect(document.adoptedStyleSheets).toHaveLength(0)
   })
 })
 

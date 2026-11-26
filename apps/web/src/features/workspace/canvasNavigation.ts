@@ -25,7 +25,7 @@ export class CanvasNavigation {
     this.desired = options.initialMode ?? 'chat'
   }
 
-  change(mode: CanvasMode): void {
+  change(mode: CanvasMode, telemetryAllowed = true): void {
     if (mode === this.desired && mode !== 'files' && mode !== 'docs') return
     this.desired = mode
     const generation = ++this.generation
@@ -34,10 +34,11 @@ export class CanvasNavigation {
     const update = () => {
       if (generation === this.generation) {
         this.apply(mode)
-        track('workspace_surface_changed', {
-          surface: mode,
-          duration_ms: performance.now() - start,
-        })
+        if (telemetryAllowed)
+          track('workspace_surface_changed', {
+            surface: mode,
+            duration_ms: performance.now() - start,
+          })
       }
     }
     if (this.options.start === undefined || this.options.reducedMotion()) {

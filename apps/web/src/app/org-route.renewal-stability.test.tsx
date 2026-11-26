@@ -1,3 +1,7 @@
+import {
+  isTelemetryWorkspacePolicyAllowed,
+  resetTelemetryConsentForTests,
+} from '../analytics/telemetry/consent'
 import { useEffect, type ReactNode } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
@@ -7,7 +11,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { User, UserManager } from 'oidc-client-ts'
+import { ErrorResponse, User, UserManager } from 'oidc-client-ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type * as ApiClient from '../api/client'
@@ -94,6 +98,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   get.mockReset()
+  resetTelemetryConsentForTests()
 })
 
 describe('concealsProtectedSurface', () => {
@@ -285,3 +290,88 @@ it('renews a 260s Community OIDC credential silently with zero SessionLoading re
   expect(composer).toBeVisible()
   expect(composer).toHaveFocus()
 })
+
+it.each(['freemium_pme', 'enterprise'] as const)(
+  'keeps %s policy blocked while unresolved and reacts to both tenant caches through credential expiry',
+  async (planTier) => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_KEYCLOAK_URL', 'https://id.example.test')
+    vi.stubEnv('VITE_OIDC_CLIENT_ID', 'console')
+    vi.stubEnv('VITE_POSTHOG_KEY', 'fixture')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+    vi.spyOn(UserManager.prototype, 'signinRedirect').mockResolvedValue()
+    vi.spyOn(UserManager.prototype, 'signinCallback').mockResolvedValueOnce(
+      communityOidcUser('community-token')
+    )
+    await authAdapter.signIn('community')
+    await authAdapter.handleCallback()
+    const me = {
+      ...communityMe,
+      organisations: [{ ...communityMe.organisations[0]!, plan_tier: planTier }],
+    }
+    get.mockImplementation((path: string) =>
+      path === '/me' ? Promise.resolve({ data: me }) : new Promise(() => {})
+    )
+    const home = createRoute({
+      getParentRoute: () => orgRoute,
+      path: 'home',
+      component: () => <h1>Home</h1>,
+    })
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([orgRoute.addChildren([home])]),
+      history: createMemoryHistory({ initialEntries: ['/community/home'] }),
+    })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider adapter={authAdapter}>
+          <SessionExpiryProvider>
+            <RouterProvider router={router} />
+          </SessionExpiryProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    )
+    await screen.findByRole('heading', { name: 'Home' })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(false)
+    const id = me.organisations[0]!.organisation.id
+    act(() => {
+      queryClient.setQueryData(['organisation-tenant', id], { slug: 'community', status: 'active' })
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(planTier !== 'enterprise')
+    act(() => {
+      queryClient.setQueryData(['organisation-tenant', id], { hosting_mode: 'cloud-shared' })
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(planTier !== 'enterprise')
+    act(() => {
+      queryClient.setQueryData(['workspace-tenant', id], { hostingMode: 'cloud_dedicated' })
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(false)
+    act(() => {
+      queryClient.setQueryData(['organisation-tenant', id], {
+        hosting_mode: 'cloud_dedicated',
+        telemetry_enabled: true,
+      })
+      queryClient.setQueryData(['workspace-tenant', id], {
+        hostingMode: 'cloud-dedicated',
+        telemetryEnabled: true,
+      })
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(true)
+    act(() => {
+      queryClient.setQueryData(['workspace-tenant', id], {
+        hostingMode: 'cloud-dedicated',
+        telemetryEnabled: false,
+      })
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(false)
+    // Retiring credentials cannot release the layout's policy owner.
+    vi.spyOn(UserManager.prototype, 'signinSilent').mockRejectedValueOnce(
+      new ErrorResponse({ error: 'invalid_grant' })
+    )
+    await act(async () => {
+      await authAdapter.renew()
+    })
+    expect(isTelemetryWorkspacePolicyAllowed()).toBe(false)
+    view.unmount()
+  }
+)

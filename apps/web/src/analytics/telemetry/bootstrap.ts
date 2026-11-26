@@ -8,7 +8,12 @@ import {
   subscribeTelemetryConsent,
 } from './consent'
 import { reportTelemetryError } from './diagnostics'
-import { EU_INGESTION_HOST, routeArea, type TelemetryOperation } from './privacy'
+import {
+  EU_INGESTION_HOST,
+  isConfiguredEuTelemetry,
+  routeArea,
+  type TelemetryOperation,
+} from './privacy'
 
 export async function startTelemetry(
   router: AnyRouter,
@@ -16,7 +21,8 @@ export async function startTelemetry(
   host: string,
   loadTransport = () => import('./transport')
 ): Promise<() => void> {
-  if (!key.trim() || host !== EU_INGESTION_HOST) return () => {}
+  if (!isConfiguredEuTelemetry(key, host)) return () => {}
+  host = host.trim() || EU_INGESTION_HOST
   let epoch = 0
   let stopActive = () => {}
   const refresh = () => {
@@ -45,6 +51,7 @@ export async function startTelemetry(
         window.addEventListener('kodera:route-error', boundary)
         window.addEventListener('error', error)
         window.addEventListener('unhandledrejection', rejection)
+        const startedAt = performance.now()
         const observers: PerformanceObserver[] = []
         let cls = 0
         let clsWindow = 0
@@ -57,6 +64,8 @@ export async function startTelemetry(
               const observer = new PerformanceObserver((list) => {
                 if (current !== epoch || !hasTelemetryConsent()) return
                 for (const entry of list.getEntries()) {
+                  if (current !== epoch || !hasTelemetryConsent()) return
+                  if (entry.startTime < startedAt) continue
                   if (type === 'resource') {
                     // Examine a resource path only to select a fixed operation; retain no URL.
                     let operation: TelemetryOperation | undefined

@@ -202,16 +202,20 @@ export type TenantPhase = 'preparing' | 'failed' | 'closed' | 'open'
 export interface WorkspaceTenant {
   hostingMode?: 'community' | 'cloud-shared' | 'cloud-dedicated' | undefined
   hosting_mode?: 'community' | 'cloud-shared' | 'cloud-dedicated' | undefined
+  telemetryEnabled?: boolean | undefined
   slug: string
   status: TenantStatus
 }
 
+const hostingModeSchema = z
+  .enum(['community', 'cloud-shared', 'cloud-dedicated', 'cloud_dedicated'])
+  .transform((mode) => (mode === 'cloud_dedicated' ? ('cloud-dedicated' as const) : mode))
+
 const tenantSchema = z.object({
-  hostingMode: z.enum(['community', 'cloud-shared', 'cloud-dedicated']).optional().catch(undefined),
-  hosting_mode: z
-    .enum(['community', 'cloud-shared', 'cloud-dedicated'])
-    .optional()
-    .catch(undefined),
+  telemetryEnabled: z.boolean().optional(),
+  telemetry_enabled: z.boolean().optional(),
+  hostingMode: hostingModeSchema.optional().catch(undefined),
+  hosting_mode: hostingModeSchema.optional().catch(undefined),
   slug: z.string().min(1),
   status: z.enum([
     'ordered',
@@ -232,7 +236,11 @@ const tenantSchema = z.object({
 export function requireTenant(data: unknown): WorkspaceTenant {
   const parsed = tenantSchema.safeParse(data)
   if (!parsed.success) throw new Error('The tenant answer is not one the workspace can use.')
-  return { slug: parsed.data.slug, status: parsed.data.status }
+  return {
+    ...parsed.data,
+    hostingMode: parsed.data.hostingMode ?? parsed.data.hosting_mode,
+    telemetryEnabled: parsed.data.telemetryEnabled ?? parsed.data.telemetry_enabled,
+  }
 }
 
 /** How long until the tenant is read again: every 10 s while an operator prepares it, every

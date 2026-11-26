@@ -1,3 +1,4 @@
+import { isConfiguredEuTelemetry } from '../analytics/telemetry/policy'
 // What a customer sees when a route fails to load (docs/specs/00-shell-and-login.md
 // §5, `shell` Error row: "`GET /me` fails → full-page error with retry and
 // support"). Without it the router falls back to its own boundary, which
@@ -240,11 +241,7 @@ function LoadFailedContent({ error, reset }: ErrorComponentProps) {
 
 /** A content-free signal; only the active, consenting bootstrap listens to it. */
 export function notifyRouteError(): void {
-  if (!import.meta.env.VITE_POSTHOG_KEY?.trim()) return
-  if (
-    import.meta.env.VITE_POSTHOG_HOST &&
-    import.meta.env.VITE_POSTHOG_HOST !== 'https://eu.i.posthog.com'
-  )
+  if (!isConfiguredEuTelemetry(import.meta.env.VITE_POSTHOG_KEY, import.meta.env.VITE_POSTHOG_HOST))
     return
   window.dispatchEvent(new Event('kodera:route-error'))
 }

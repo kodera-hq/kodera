@@ -1,3 +1,7 @@
+import {
+  holdTelemetryForConfidentialContext,
+  isTelemetryConfidentiallyHeld,
+} from '../../analytics/telemetry/consent'
 import { readLastChannel, saveLastChannel } from './lastChannel'
 import { track } from '../../analytics/track'
 import { CanvasNavigation } from './canvasNavigation'
@@ -42,6 +46,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -91,6 +96,7 @@ import {
 import {
   channelLabel,
   currentChannel,
+  everyChannel,
   tenantPhase,
   welcomeChannel,
   withEveryRoomPending,
@@ -426,9 +432,9 @@ function LiveWorkspace({
       })
   )
   const setCanvas = useCallback(
-    (mode: CanvasMode) => {
+    (mode: CanvasMode, telemetryAllowed = true) => {
       if (mode === 'files' || mode === 'docs') setCanvasRequestKey((key) => key + 1)
-      canvasNavigation.change(mode)
+      canvasNavigation.change(mode, telemetryAllowed)
     },
     [canvasNavigation]
   )
@@ -468,9 +474,9 @@ function LiveWorkspace({
   const selectedChannelId = channel?.id
   const selectedChannelKind = channel?.kind
   useEffect(() => {
-    if (selectedChannelId)
+    if (selectedChannelId && !channel?.is_confidential && !isTelemetryConfidentiallyHeld())
       track('channel_opened', { kind: selectedChannelKind === 'audio' ? 'voice' : 'chat' })
-  }, [selectedChannelId, selectedChannelKind])
+  }, [selectedChannelId, selectedChannelKind, channel?.is_confidential])
   const navigation = useChannelNavigation(org)
   const espace = useOpenEspace(serverSlug)
   useEffect(() => {
@@ -546,7 +552,12 @@ function LiveWorkspace({
             selectedByChannel: { ...prev.selectedByChannel, [matchedDoc.channelId]: matchedDoc.id },
           }))
 
-          canvasNavigation.change('docs')
+          canvasNavigation.change(
+            'docs',
+            !everyChannel(liveWorkspace).some(
+              (entry) => entry.id === matchedDoc.channelId && entry.is_confidential
+            )
+          )
           if (matchedDoc.channelId && matchedDoc.channelId !== channel?.id) {
             void navigation.onNavigateChannel(matchedDoc.channelId)
           }
@@ -566,7 +577,12 @@ function LiveWorkspace({
             selectedByChannel: { ...prev.selectedByChannel, [doc.channelId]: doc.id },
           }))
 
-          canvasNavigation.change('docs')
+          canvasNavigation.change(
+            'docs',
+            !everyChannel(liveWorkspace).some(
+              (entry) => entry.id === doc.channelId && entry.is_confidential
+            )
+          )
           if (doc.channelId !== channel?.id) void navigation.onNavigateChannel(doc.channelId)
         }}
         canvasRequestKey={canvasRequestKey}
@@ -622,7 +638,12 @@ function LiveWorkspace({
         {...navigation}
         onNavigateChannel={(nextChannelId) => {
           // A channel click is also a canvas choice, even when the route is unchanged.
-          setCanvas('chat')
+          canvasNavigation.change(
+            'chat',
+            !everyChannel(liveWorkspace).some(
+              (entry) => entry.id === nextChannelId && entry.is_confidential
+            )
+          )
           return navigation.onNavigateChannel(nextChannelId)
         }}
         {...(store ? {} : { onReconnect: () => void espace.open() })}
@@ -710,6 +731,11 @@ export function WorkspaceScreen() {
   const organisationName = membership.organisation.name
   const query = useWorkspaceQuery(organisationId)
   const tenantQuery = useWorkspaceTenantQuery(organisationId)
+  // Until the tenant policy is known, saved consent must not start collection.
+  useLayoutEffect(() => {
+    if (tenantQuery.data === undefined || query.data === undefined)
+      return holdTelemetryForConfidentialContext()
+  }, [tenantQuery.data, query.data])
   const savedChannel = readLastChannel(org, me.id)
   const availableChannels = useMemo(
     () =>
@@ -730,6 +756,16 @@ export function WorkspaceScreen() {
     if (restoredChannelId && availableChannels.some((channel) => channel.id === restoredChannelId))
       saveLastChannel(org, me.id, restoredChannelId)
   }, [org, me.id, restoredChannelId, availableChannels])
+  const addressedChannel =
+    query.data?.workspace === undefined
+      ? undefined
+      : restoredChannelId !== undefined
+        ? everyChannel(query.data.workspace).find((channel) => channel.id === restoredChannelId)
+        : currentChannel(query.data.workspace, undefined)
+  const confidentialChannel = addressedChannel?.is_confidential === true
+  useLayoutEffect(() => {
+    if (confidentialChannel) return holdTelemetryForConfidentialContext()
+  }, [confidentialChannel])
   const tenant = tenantQuery.data
   const phase = tenant === undefined || tenant === null ? undefined : tenantPhase(tenant.status)
   const read = query.data === undefined ? undefined : workspaceView(query.data.workspace)

@@ -99,3 +99,26 @@ describe('NarrowTopBar account entries', () => {
     expect(screen.getByRole('button', { name: 'Compte et organisation' })).toBeInTheDocument()
   })
 })
+
+it('uses removable static clearance without style attributes when sheets cannot be adopted', () => {
+  const original = Object.getOwnPropertyDescriptor(document, 'adoptedStyleSheets')
+  Object.defineProperty(document, 'adoptedStyleSheets', { configurable: true, value: undefined })
+  try {
+    const view = render(
+      <NarrowTopBar
+        org="acme-sa"
+        organisation={{ name: 'ACME', slug: 'acme-sa' }}
+        user={{ displayName: 'Henri', role: 'org_admin' }}
+        onSignOut={() => {}}
+      />
+    )
+    expect(document.documentElement).toHaveClass('shell-header-height-fallback')
+    expect(document.documentElement).not.toHaveAttribute('style')
+    expect(view.container.querySelectorAll('[style]')).toHaveLength(0)
+    view.unmount()
+    expect(document.documentElement).not.toHaveClass('shell-header-height-fallback')
+  } finally {
+    if (original) Object.defineProperty(document, 'adoptedStyleSheets', original)
+    else Reflect.deleteProperty(document, 'adoptedStyleSheets')
+  }
+})

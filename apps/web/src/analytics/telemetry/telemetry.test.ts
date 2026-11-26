@@ -6,13 +6,24 @@ import {
   bindTelemetryScope,
   getTelemetryScope,
   hasTelemetryConsent,
+  holdTelemetryForConfidentialContext,
+  isTelemetryConfidentiallyHeld,
+  resetTelemetryConsentForTests,
+  holdTelemetryForWorkspacePolicy,
   purgeTelemetryConsent,
   refreshTelemetryConsent,
   setTelemetryConsent,
   setTelemetryScope,
 } from './consent'
 import { measureTelemetryOperation, reportTelemetryError } from './diagnostics'
-import { CAPTURE_PRIVACY, codeStack, EU_INGESTION_HOST, sanitizeTelemetryEvent } from './privacy'
+import {
+  CAPTURE_PRIVACY,
+  codeStack,
+  EU_INGESTION_HOST,
+  isConfiguredEuTelemetry,
+  isWorkspaceTelemetryAllowed,
+  sanitizeTelemetryEvent,
+} from './privacy'
 import { createTelemetryTransport } from './transport'
 
 const scope = { person: 'person-a', workspace: 'workspace-a', slug: 'sample' }
@@ -36,6 +47,7 @@ function mockRouter() {
 }
 beforeEach(() => {
   localStorage.clear()
+  resetTelemetryConsentForTests()
   setTelemetryScope(scope)
 })
 afterEach(() => {
@@ -445,6 +457,7 @@ describe('scoped consent and startup', () => {
     expect(getTelemetryScope()).toBeUndefined()
   })
   it('collects only fixed performance metrics and never retains resource URLs or content', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(0)
     const callbacks = new Map<string, PerformanceObserverCallback>()
     const disconnected = vi.fn()
     const observations: PerformanceObserverInit[] = []
@@ -479,9 +492,10 @@ describe('scoped consent and startup', () => {
       { startTime: 200, value: 0.3 },
       { startTime: 1500, value: 0.4 },
     ])
-    emit('event', [{ interactionId: 1, duration: 32 }])
+    emit('event', [{ startTime: 50, interactionId: 1, duration: 32 }])
     emit('resource', [
       {
+        startTime: 50,
         name: 'https://matrix.test/_matrix/client/v3/rooms/private-id/send/m.room.message/private-token?email=member@example.test',
         duration: 42,
       },
@@ -511,6 +525,17 @@ describe('scoped consent and startup', () => {
       {} as PerformanceObserver
     )
     expect(request).toHaveBeenCalledTimes(6)
+    const release = holdTelemetryForConfidentialContext()
+    vi.mocked(performance.now).mockReturnValue(2000)
+    release()
+    await settle()
+    emit('resource', [{ startTime: 1999, name: '/_matrix/media/v3/upload', duration: 10 }])
+    emit('event', [{ startTime: 1999, interactionId: 2, duration: 10 }])
+    emit('layout-shift', [{ startTime: 1999, value: 0.2 }])
+    emit('largest-contentful-paint', [{ startTime: 1999 }])
+    expect(request).toHaveBeenCalledTimes(6)
+    emit('resource', [{ startTime: 2000, name: '/_matrix/media/v3/upload', duration: 10 }])
+    expect(request).toHaveBeenCalledTimes(7)
   })
   it('does not deliver an operation that began before consent or survived withdrawal', async () => {
     const request = vi.fn().mockResolvedValue({})
@@ -588,5 +613,146 @@ describe('scoped consent and startup', () => {
     expect(bodies[0].properties).toMatchObject({ operation: 'docs_save', success: false })
     expect(bodies[1].properties).toMatchObject({ kind: 'TypeError', source: 'rejection' })
     expect(JSON.stringify(bodies)).not.toMatch(/private|person@|bearer/)
+  })
+})
+
+describe('confidential and workspace cutoffs', () => {
+  it.each(['sovereign', 'enterprise', 'cloud-dedicated', 'cloud_dedicated'])(
+    'blocks %s unless explicitly enabled',
+    (kind) => {
+      const policy = kind.startsWith('cloud') ? { hostingMode: kind } : { planTier: kind }
+      expect(isWorkspaceTelemetryAllowed(policy)).toBe(false)
+      expect(isWorkspaceTelemetryAllowed({ ...policy, telemetryEnabled: true })).toBe(true)
+      expect(isWorkspaceTelemetryAllowed({ ...policy, telemetryEnabled: false })).toBe(false)
+      expect(isWorkspaceTelemetryAllowed({ planTier: 'freemium_pme' })).toBe(true)
+    }
+  )
+  it.each([undefined, '', '   ', EU_INGESTION_HOST, ` ${EU_INGESTION_HOST} `])(
+    'accepts only configured EU defaults (%s)',
+    (host) => {
+      expect(isConfiguredEuTelemetry(' key ', host)).toBe(true)
+      expect(isConfiguredEuTelemetry('  ', host)).toBe(false)
+      expect(isConfiguredEuTelemetry(undefined, host)).toBe(false)
+    }
+  )
+  it.each(['https://us.i.posthog.com', EU_INGESTION_HOST + '/', EU_INGESTION_HOST + '.evil.test'])(
+    'rejects %s',
+    (host) => {
+      expect(isConfiguredEuTelemetry('key', host)).toBe(false)
+    }
+  )
+  it('never imports a transport for a non-EU host even with saved consent', async () => {
+    setTelemetryConsent(true)
+    const load = vi.fn()
+    disposals.push(
+      await startTelemetry(mockRouter().router, 'key', 'https://us.i.posthog.com', load)
+    )
+    track('channel_opened', { kind: 'chat' })
+    expect(load).not.toHaveBeenCalled()
+  })
+  it('aborts synchronously, retains saved consent across overlapping leases and rotates identity', async () => {
+    const request = vi.fn((_url: string, _init: RequestInit) => new Promise(() => {}))
+    vi.stubGlobal('fetch', request)
+    setTelemetryConsent(true)
+    disposals.push(
+      await startTelemetry(mockRouter().router, 'key', EU_INGESTION_HOST, async () => ({
+        createTelemetryTransport,
+      }))
+    )
+    await settle()
+    track('channel_opened', { kind: 'chat' })
+    const first = request.mock.calls[0]!
+    const release = holdTelemetryForConfidentialContext()
+    expect(first[1].signal?.aborted).toBe(true)
+    const releaseOther = holdTelemetryForConfidentialContext()
+    release()
+    release()
+    expect(isTelemetryConfidentiallyHeld()).toBe(true)
+    track('channel_opened', { kind: 'chat' })
+    expect(request).toHaveBeenCalledOnce()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-a","workspace-a"]')).toBe(
+      'yes'
+    )
+    releaseOther()
+    await settle()
+    track('channel_opened', { kind: 'chat' })
+    expect(JSON.parse(request.mock.calls[1]![1].body as string).distinct_id).not.toBe(
+      JSON.parse(first[1].body as string).distinct_id
+    )
+    const releasePolicy = holdTelemetryForWorkspacePolicy()
+    const releaseOtherPolicy = holdTelemetryForWorkspacePolicy()
+    expect(request.mock.calls[1]![1].signal?.aborted).toBe(true)
+    expect(hasTelemetryConsent()).toBe(false)
+    track('channel_opened', { kind: 'chat' })
+    expect(request).toHaveBeenCalledTimes(2)
+    releasePolicy()
+    releasePolicy()
+    expect(hasTelemetryConsent()).toBe(false)
+    releaseOtherPolicy()
+    await settle()
+    expect(hasTelemetryConsent()).toBe(true)
+  })
+  it('disconnects observers, suppresses window errors and drops the rest of an interrupted batch', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(0)
+    const callbacks = new Map<string, PerformanceObserverCallback>()
+    const disconnect = vi.fn()
+    class Observer {
+      static supportedEntryTypes = ['resource', 'event']
+      constructor(private callback: PerformanceObserverCallback) {}
+      observe({ type }: PerformanceObserverInit) {
+        callbacks.set(type!, this.callback)
+      }
+      disconnect = disconnect
+    }
+    vi.stubGlobal('PerformanceObserver', Observer)
+    let release = () => {}
+    const request = vi.fn((_url: string, _init: RequestInit) => {
+      release = holdTelemetryForConfidentialContext()
+      return new Promise(() => {})
+    })
+    vi.stubGlobal('fetch', request)
+    setTelemetryConsent(true)
+    disposals.push(
+      await startTelemetry(mockRouter().router, 'key', EU_INGESTION_HOST, async () => ({
+        createTelemetryTransport,
+      }))
+    )
+    await settle()
+    const remainingDuration = vi.fn(() => 20)
+    const entries = [
+      { startTime: 1, interactionId: 1, duration: 10 },
+      {
+        startTime: 1,
+        interactionId: 2,
+        get duration() {
+          return remainingDuration()
+        },
+      },
+    ]
+    const list = { getEntries: () => entries } as unknown as PerformanceObserverEntryList
+    callbacks.get('event')!(list, {} as PerformanceObserver)
+    expect(request).toHaveBeenCalledOnce()
+    expect(request.mock.calls[0]![1].signal?.aborted).toBe(true)
+    expect(disconnect).toHaveBeenCalledTimes(2)
+    expect(remainingDuration).not.toHaveBeenCalled()
+    const error = new Error('canary.pii@acme.fr Auth' + 'Token sample')
+    const preventDefault = (event: ErrorEvent) => event.preventDefault()
+    window.addEventListener('error', preventDefault)
+    window.dispatchEvent(new ErrorEvent('error', { error, cancelable: true }))
+    window.removeEventListener('error', preventDefault)
+    const rejection = new Event('unhandledrejection')
+    Object.assign(rejection, { reason: error })
+    window.dispatchEvent(rejection)
+    window.dispatchEvent(new Event('kodera:route-error'))
+    callbacks.get('event')!(list, {} as PerformanceObserver)
+    callbacks.get('resource')!(
+      {
+        getEntries: () => [{ name: '/_matrix/media/v3/upload', duration: 10 }],
+      } as unknown as PerformanceObserverEntryList,
+      {} as PerformanceObserver
+    )
+    expect(request).toHaveBeenCalledOnce()
+    expect(JSON.stringify(request.mock.calls)).not.toMatch(/canary|acme|Bearer|secret/)
+    release()
   })
 })
