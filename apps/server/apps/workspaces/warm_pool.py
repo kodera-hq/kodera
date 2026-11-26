@@ -6,8 +6,12 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-from apps.orgs.intake_services import RESERVED_SLUGS as RESERVED_ORGANISATION_SLUGS
+from apps.orgs.intake_services import (
+    RESERVED_SLUGS as RESERVED_ORGANISATION_SLUGS,
+    is_reserved_slug,
+)
 from apps.tenancy.selectors import RESERVED_SLUGS as RESERVED_TENANT_SLUGS
+from apps.tenancy.services import tenant_slug_is_reserved
 
 from .models import Channel
 from .templates import (
@@ -32,9 +36,14 @@ ADDITIONAL_CHANNEL_NAME_RE = re.compile(
 # Both claim flows share the console's root namespace. Punctuation-led routes such as
 # /.well-known and /_matrix are already excluded by both slug grammars.
 RESERVED_SLUGS = (
-    RESERVED_ORGANISATION_SLUGS
-    | RESERVED_TENANT_SLUGS
+    frozenset(RESERVED_ORGANISATION_SLUGS)
+    | frozenset(RESERVED_TENANT_SLUGS)
     | {
+        "__demo-messaging",
+        "__mock-idp",
+        "_kodera",
+        "_matrix",
+        ".well-known",
         "agent",
         "assets",
         "booking",
@@ -369,7 +378,7 @@ def parse_template_customization(
 
 
 def workspace_slug_is_reserved(slug: str) -> bool:
-    return slug in RESERVED_SLUGS or slug.startswith(("xn--", "synth-"))
+    return slug in RESERVED_SLUGS or is_reserved_slug(slug) or tenant_slug_is_reserved(slug)
 
 
 def parse_instant_claim_request(

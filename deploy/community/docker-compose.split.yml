@@ -22,6 +22,7 @@ services:
 
   server:
     environment:
+      KODERA_APP_ORIGIN: ${KODERA_APP_ORIGIN:-}
       KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}${KODERA_APP_ORIGIN:+,}${KODERA_APP_ORIGIN:-}
       KODERA_COLLAB_PUBLIC_URL: wss://api.${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}/documents/collab
 

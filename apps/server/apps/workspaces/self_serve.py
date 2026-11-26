@@ -7,8 +7,9 @@ in a single atomic database transaction with zero cloud/Keycloak credentials (`A
 
 At Milestone A, KODERA_BILLING_ENABLED=false refuses new Sovereign orders with
 409 billing-disabled. Cardless signup remains available. Its redirect_path is local to
-the console. The 201 Location uses KODERA_APP_ORIGIN when configured. For invitation
-mail, configure that origin on the sender and include it in KODERA_MAIL_LINK_ORIGINS.
+the console. The 201 Location uses KODERA_APP_ORIGIN or the sole configured console origin.
+Deployments with multiple console origins must choose one with KODERA_APP_ORIGIN.
+For invitation mail, configure that origin on the sender and include it in KODERA_MAIL_LINK_ORIGINS.
 KODERA_SELF_SERVE_DISPOSABLE_DOMAINS extends the built-in list with comma-separated domains.
 """
 
@@ -86,6 +87,10 @@ class SelfServeAuthForbiddenError(Exception):
     """Caller token is not a verified shared-realm customer identity."""
 
 
+class SelfServeDisposableEmailError(SelfServeAuthForbiddenError):
+    """The verified email domain is blocked for self-serve signup."""
+
+
 class SelfServeRateLimitError(Exception):
     """Caller already owns the maximum number of active freemium PME workspaces."""
 
@@ -150,15 +155,19 @@ def _realm_from_issuer(issuer: str) -> str | None:
 
 def _signup_email(raw: str) -> str:
     email = raw.strip()
+    _, separator, domain = email.rpartition("@")
+    if not separator:
+        return email
+    # Passport has already verified the stored address. Only its domain matters here.
     try:
-        validate_email(email)
-        domain = email.rsplit("@", 1)[-1].encode("idna").decode("ascii").lower().rstrip(".")
-    except (ValidationError, UnicodeError):
-        raise SelfServeAuthForbiddenError() from None
+        domain = domain.encode("idna").decode("ascii")
+    except UnicodeError:
+        pass
+    domain = domain.lower().rstrip(".")
     blocked = DISPOSABLE_EMAIL_DOMAINS | settings.KODERA_SELF_SERVE_DISPOSABLE_DOMAINS
     labels = domain.split(".")
     if any(".".join(labels[i:]) in blocked for i in range(len(labels))):
-        raise SelfServeAuthForbiddenError()
+        raise SelfServeDisposableEmailError()
     return email
 
 
@@ -183,6 +192,10 @@ def authorise_self_serve_caller(*, verified: VerifiedAccessToken, lane: str) -> 
         or len(verified.email.strip()) > 254
     ):
         raise SelfServeAuthForbiddenError()
+    try:
+        validate_email(verified.email.strip())
+    except ValidationError:
+        raise SelfServeAuthForbiddenError() from None
     return SelfServeCaller(
         issuer=shared_issuer,
         realm=realm,

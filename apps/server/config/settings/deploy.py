@@ -88,7 +88,6 @@ INSTALLED_APPS = [
 ]
 KODERA_LOOPBACK_ISSUERS = False
 KODERA_SELF_SERVE_DISPOSABLE_DOMAINS = self_serve_disposable_domains(os.environ)
-KODERA_APP_ORIGIN = app_origin(os.environ)
 KODERA_AUTH_TRUST = auth_trust(os.environ)
 KODERA_CONSOLE_CLIENT_ID = console_client_id(os.environ)
 KODERA_STAFF_ISSUER = staff_issuer(os.environ)
@@ -102,6 +101,7 @@ KODERA_DISCOVERY_HMAC_KEY = os.environ.get("KODERA_DISCOVERY_HMAC_KEY")
 # The browser origins (the Console's), comma-separated: the ones discovery admits and the only
 # ones CORS names (core/api/edge.py). A malformed value names none; validated where it is read.
 KODERA_CONSOLE_ORIGINS = os.environ.get("KODERA_CONSOLE_ORIGINS")
+KODERA_APP_ORIGIN = app_origin(os.environ)
 # Where a support ticket is mailed (docs/specs/SUPPORT_TICKETS.md §5); validated by the route.
 KODERA_SUPPORT_MAILBOX = os.environ.get("KODERA_SUPPORT_MAILBOX") or None
 # createPaymentLink's `return_url` is held to the console's own origins, read by discovery's parser

@@ -14,6 +14,7 @@ from apps.workspaces.quota_http import respond_once
 from apps.workspaces.self_serve import (
     SelfServeAuthForbiddenError,
     SelfServeCaller,
+    SelfServeDisposableEmailError,
     SelfServeRateLimitError,
     SelfServeSlugTakenError,
     SelfServeUnavailableError,
@@ -22,7 +23,7 @@ from apps.workspaces.self_serve import (
     parse_self_serve_request,
     resolve_self_serve_caller_from_token,
 )
-from core.api.edge import SlidingWindow, client_address, listed_origin, principal_key, rate_limited
+from core.api.edge import SlidingWindow, client_address, principal_key, rate_limited
 from core.api.idempotency import PROBLEM_TYPE, StoredResponse
 from core.api.scopes import declares
 from services.identity.access_tokens import TokenVerificationError
@@ -133,7 +134,7 @@ def _execute_self_serve(
             {"slug": exc.slug, "suggestions": exc.suggestions},
         )
 
-    origin = settings.KODERA_APP_ORIGIN or listed_origin(request)
+    origin = settings.KODERA_APP_ORIGIN
     return StoredResponse(
         status=201,
         location=origin + created["redirect_path"] if origin else None,
@@ -151,6 +152,7 @@ def self_serve_workspace(request: HttpRequest) -> HttpResponse:
             response["Allow"] = "POST"
             return responses.finish(response, request_id)
 
+        caller = _resolve_caller(request)
         address = client_address(request.META, settings.KODERA_TRUSTED_EDGE)
         try:
             peer = normalized_peer(address)
@@ -159,7 +161,6 @@ def self_serve_workspace(request: HttpRequest) -> HttpResponse:
         limited = _throttle(request, principal_key("signup-ip", peer), SIGNUP_IP_LIMIT)
         if limited is not None:
             return responses.finish(limited, request_id)
-        caller = _resolve_caller(request)
         limited = _throttle(
             request, principal_key(caller.issuer, caller.subject), SIGNUP_IDENTITY_LIMIT
         )
@@ -179,6 +180,8 @@ def self_serve_workspace(request: HttpRequest) -> HttpResponse:
         )
     except TokenVerificationError:
         response = responses.problem("unauthenticated", request_id)
+    except SelfServeDisposableEmailError:
+        response = responses.problem("forbidden", request_id, code="disposable-email-not-allowed")
     except SelfServeAuthForbiddenError:
         response = responses.problem("forbidden", request_id)
     except SelfServeRateLimitError as exc:

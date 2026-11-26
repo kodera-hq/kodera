@@ -1296,6 +1296,7 @@ SPLIT_OVERRIDE_ENVIRONMENT: dict[str, dict[str, str]] = {
         "KODERA_APP_ORIGIN": "${KODERA_APP_ORIGIN:-}",
     },
     "server": {
+        "KODERA_APP_ORIGIN": "${KODERA_APP_ORIGIN:-}",
         "KODERA_CONSOLE_ORIGINS": SPLIT_CONSOLE_ORIGINS_EXPRESSION,
         "KODERA_COLLAB_PUBLIC_URL": "wss://api.${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}/documents/collab",
     },
@@ -4197,6 +4198,9 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "docker-compose.split.yml must mount Caddyfile.split as Caddy's only configuration"),
     ("Caddy cannot name the API origin", "override", _first("      KODERA_MATRIX_DOMAIN: ", "      KODERA_MATRIX_DOMAIN_UNUSED: "),
      "docker-compose.split.yml must set KODERA_MATRIX_DOMAIN on service 'caddy'"),
+    ("the API lacks the app origin", "override",
+     _first("  server:\n    environment:\n      KODERA_APP_ORIGIN: ${KODERA_APP_ORIGIN:-}\n", "  server:\n    environment:\n"),
+     "docker-compose.split.yml must set KODERA_APP_ORIGIN on service 'server'"),
     ("the API admits every origin", "override", _first("KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?", "KODERA_CONSOLE_ORIGINS: '*'${KODERA_DOMAIN:?"),
      "docker-compose.split.yml must set KODERA_CONSOLE_ORIGINS on service 'server' to https://${KODERA_DOMAIN:?"),
     ("room-access hands out the single-origin signalling URL", "override", _first("wss://livekit.${KODERA_DOMAIN", "wss://${KODERA_DOMAIN"),
