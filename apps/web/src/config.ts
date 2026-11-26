@@ -60,6 +60,13 @@ export function isDesktopBundledOrigin(): boolean {
 export const keycloakUrl = (): string =>
   required(import.meta.env.VITE_KEYCLOAK_URL, 'VITE_KEYCLOAK_URL')
 
+/** Only an explicit release opt-in offers dedicated ordering in workspace creation. */
+export const sovereignLiveReady = (): boolean =>
+  import.meta.env.VITE_SOVEREIGN_LIVE_READY === 'true'
+
+/** Optional second web origin on a split Community deployment. */
+export const appOrigin = (): string | undefined => read(import.meta.env.VITE_APP_ORIGIN)
+
 /** Whether to serve the Core API from the generated mocks instead of the network. */
 export const mswEnabled = (): boolean => read(import.meta.env.VITE_ENABLE_MSW) === '1'
 

@@ -7,7 +7,7 @@ import { COMMUNITY_CATEGORIES } from '../docs/communityStructure'
 import { developerDocsCopy } from '../docs/developerDocsMessages'
 import { DEVELOPER_DOCS_URL } from '../docs/communityPreview'
 import { WORKSPACE_COMMAND_EVENT, type WorkspaceCommand } from './WorkspaceMenu'
-import { workspaceMenuCopy } from './workspaceMenuMessages'
+import { workspaceMenuCopy } from '../../i18n/catalogues/workspaceMenuMessages'
 import { registerThemeShare, useActiveThemeShare } from './themeSharing'
 import { ThemeStudioModal } from '../appearance/ThemeStudioModal'
 import {

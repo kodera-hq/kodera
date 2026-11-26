@@ -1,6 +1,7 @@
 const messages = {
   en: {
     workspaces: 'Workspaces',
+    createPersonal: 'Create my workspace',
     communitySupport: 'Community & Support',
     create: '+ Create or configure a workspace',
     admin: 'Workspace administration…',
@@ -16,6 +17,7 @@ const messages = {
   },
   fr: {
     workspaces: 'Espaces de travail',
+    createPersonal: 'Créer mon espace',
     communitySupport: 'Communauté & Support',
     create: '+ Créer ou configurer un nouvel espace',
     admin: 'Administration de l’espace…',

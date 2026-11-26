@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import '../../i18n'
+import i18n from '../../i18n'
 import { OrganisationSwitchContext } from '../../app/organisationSwitch'
 import { WorkspaceMenu, WORKSPACE_COMMAND_EVENT } from './WorkspaceMenu'
 
@@ -103,5 +103,30 @@ it('keeps the administration entry point for a delegated manager and an administ
     expect(screen.getByRole('menuitem', { name: 'Administration de l’espace…' })).toBeVisible()
     await user.keyboard('{Escape}')
     unmount()
+  }
+})
+
+it.each([
+  ['fr', 'Créer mon espace'],
+  ['en', 'Create my workspace'],
+])('gives a Community member a fresh app entry in %s', async (locale, label) => {
+  vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
+  const communityWindow = Object.create(window) as Window
+  Object.defineProperty(communityWindow, 'location', {
+    value: new URL('https://community.kodera.io/community/workspace'),
+  })
+  vi.stubGlobal('window', communityWindow)
+  try {
+    await i18n.changeLanguage(locale)
+    render(<WorkspaceMenu name="Community" slug="community" trigger={<button>Workspace</button>} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Workspace' }))
+    const entry = screen.getByRole('menuitem', { name: label })
+    expect(entry.tagName).toBe('A')
+    expect(entry).toHaveAttribute('href', 'https://app.kodera.io/workspaces/new?signIn=community')
+  } finally {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    await i18n.changeLanguage('fr')
   }
 })

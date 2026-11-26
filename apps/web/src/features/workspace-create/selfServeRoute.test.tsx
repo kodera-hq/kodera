@@ -85,8 +85,8 @@ afterEach(async () => {
   setTokenProvider(() => undefined)
   delete (window as unknown as Record<string, unknown>)['koderaDesktop']
   server.resetHandlers()
-  vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 afterAll(() => server.close())
@@ -198,6 +198,7 @@ it.each(['kodera-asset://localhost/', 'https://kodera-asset.localhost/'])(
 )
 
 it('preserves the existing owner organisation after loading /me', async () => {
+  vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', 'true')
   const membership = EXAMPLES.getMe.body.organisations[0]!
   server.use(
     http.get('*/api/v1/me', () =>
@@ -216,6 +217,62 @@ it('preserves the existing owner organisation after loading /me', async () => {
   )
   await waitFor(() => expect(router.state.location.pathname).toBe('/acme-sa/order'))
   expect(router.state.location.search).toEqual({ pack: 'sovereign' })
+})
+
+function useAppOrigin() {
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
+  const appWindow = Object.create(window) as Window
+  Object.defineProperty(appWindow, 'location', {
+    value: new URL('https://app.kodera.io/workspaces/new?signIn=community'),
+  })
+  vi.stubGlobal('window', appWindow)
+}
+
+it('starts Community OIDC on the app origin and returns to the form without replaying the handoff', async () => {
+  await authAdapter.signOut()
+  useAppOrigin()
+  const signIn = vi.spyOn(authAdapter, 'signIn').mockResolvedValue(undefined)
+  await mount('/workspaces/new?signIn=community')
+  await waitFor(() => expect(signIn).toHaveBeenCalledWith('community'))
+  expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/workspaces/new')
+  expect(dispatched).toHaveLength(0)
+  expect(screen.queryByRole('textbox', { name: 'Nom de l’espace' })).toBeNull()
+})
+
+it('opens the form without another sign-in for an active Community session on the app origin', async () => {
+  useAppOrigin()
+  vi.spyOn(authAdapter, 'getAccessToken').mockReturnValue(session.access_token)
+  vi.mocked(globalThis.fetch).mockRestore()
+  const signIn = vi.spyOn(authAdapter, 'signIn').mockResolvedValue(undefined)
+  server.use(http.get('*/api/v1/me', () => HttpResponse.json(EXAMPLES.getMe.body)))
+
+  const { router } = await mount('/workspaces/new?signIn=community')
+  expect(await screen.findByRole('textbox', { name: 'Nom de l’espace' })).toBeVisible()
+  expect(router.state.location.href).toBe('/workspaces/new')
+  expect(signIn).not.toHaveBeenCalled()
+})
+
+it('opens the new free workspace for a Sovereign deep link before checkout is ready', async () => {
+  vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', undefined)
+  const owned = { ...EXAMPLES.getMe.body.organisations[0]!, role: 'org_owner' }
+  const created = EXAMPLES.createSelfServeWorkspace.body
+  server.use(
+    http.get('*/api/v1/me', () =>
+      HttpResponse.json({ ...EXAMPLES.getMe.body, organisations: [owned] })
+    ),
+    http.post('*/api/v1/workspaces/self-serve', () => HttpResponse.json(created, { status: 201 }))
+  )
+  const { router } = await mount('/workspaces/new?plan=sovereign')
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Nom de l’espace' }),
+    'Test Studio'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Créer mon espace gratuit' }))
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/${created.organisation_slug}/workspace`)
+  )
+  expect(router.state.location.pathname).not.toBe(`/${owned.organisation.slug}/order`)
+  expect(router.state.location.search).toEqual({})
 })
 
 it.each([0, 401, 403, 503])('fails closed when /me fails with status %s', async (status) => {
@@ -248,6 +305,7 @@ it.each([
 ])(
   'preserves the Sovereign plan after 401 recovery through $button (Community: $community)',
   async ({ community, button }) => {
+    vi.stubEnv('VITE_SOVEREIGN_LIVE_READY', 'true')
     const destination = '/workspaces/new?plan=sovereign'
     const freshToken = 'synthetic-fresh-desktop-bearer'
     server.use(
