@@ -82,7 +82,7 @@ What `docker-compose.split.yml` changes, and nothing more:
 
 - Caddy reads `Caddyfile.split`: three site blocks, `api.<KODERA_MATRIX_DOMAIN>`, `matrix.<KODERA_DOMAIN>` and `livekit.<KODERA_DOMAIN>`. Each routes only its own upstreams, with the paths of "What the internet can reach", and answers `404` on every other path, so `/agent/*`, `/_matrix/federation/*`, `/_matrix/key/*`, `/_synapse/admin/*` and `/.well-known/matrix/server` all answer `404`.
 - The `web` service is not started (it is moved to the `single-origin-web` profile, which this topology never enables).
-- Core, room-access and Yjs collaboration admit `https://<KODERA_DOMAIN>`. To host the web client at a second origin, pass `--app-origin https://app.example.org` to the generator or set `KODERA_APP_ORIGIN` in the split deployment's environment file. Each service then admits both exact origins. The additional origin must use HTTPS and a dedicated hostname.
+- Core, room-access and Yjs collaboration admit `https://<KODERA_DOMAIN>`. To host the web client at a second origin, pass `--app-origin https://app.example.org` to the generator or set `KODERA_APP_ORIGIN` in the split deployment's environment file. Each service then admits both exact origins. The additional origin must use HTTPS on a dedicated subdomain of `KODERA_MATRIX_DOMAIN` so browser requests to `/api/v1/auth/discover` are same-site. Discovery rejects requests marked `Sec-Fetch-Site: cross-site`.
 - Room-access hands out `wss://livekit.<KODERA_DOMAIN>` as the signalling URL.
 - Synapse publishes `public_baseurl: https://matrix.<KODERA_DOMAIN>/`. Caddy strips upstream CORS grants on Matrix routes and returns the requesting origin only when it matches a configured web origin. Responses vary by `Origin`.
 

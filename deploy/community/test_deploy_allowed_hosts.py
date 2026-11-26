@@ -13,6 +13,8 @@ import unittest
 from contextlib import redirect_stdout
 from urllib.parse import urlsplit
 
+from configure_synapse import configure
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 
@@ -141,6 +143,21 @@ class DeployAllowedHostsTests(unittest.TestCase):
             ),
             [],
         )
+
+
+class SynapseConfigurationTests(unittest.TestCase):
+    def test_split_topology_rejects_an_insecure_app_origin(self):
+        env = {
+            "KODERA_TOPOLOGY": "split",
+            "KODERA_COMPOSE_TOPOLOGY": "split",
+            "KODERA_APP_ORIGIN": "http://app.example.org",
+        }
+        with self.assertRaisesRegex(ValueError, "KODERA_APP_ORIGIN must be an exact public HTTPS origin"):
+            configure({"server_name": "community.example.org", "user_directory": None}, env)
+
+    def test_null_user_directory_disables_search_across_all_users(self):
+        result = configure({"server_name": "community.example.org", "user_directory": None})
+        self.assertEqual(result["user_directory"], {"search_all_users": False})
 
 
 if __name__ == "__main__":

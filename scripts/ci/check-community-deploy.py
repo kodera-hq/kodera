@@ -2605,6 +2605,9 @@ def app_origin_errors(settings: dict[str, str], validate: Callable[[str, bool], 
         return [str(error)]
     web = settings["KODERA_DOMAIN"].lower()
     base = settings["KODERA_MATRIX_DOMAIN"].lower()
+    host = origin.removeprefix("https://")
+    if not host.endswith("." + base):
+        return ["KODERA_APP_ORIGIN must be a subdomain of KODERA_MATRIX_DOMAIN"]
     reserved_hosts = {web, f"api.{base}", f"matrix.{web}", f"livekit.{web}"}
     try:
         issuers = json.loads(settings["KODERA_AUTH_TRUST"])
@@ -2613,7 +2616,7 @@ def app_origin_errors(settings: dict[str, str], validate: Callable[[str, bool], 
         reserved_hosts.update((urllib.parse.urlsplit(url).hostname or "").rstrip(".") for url in urls)
     except (TypeError, ValueError):
         return ["KODERA_APP_ORIGIN requires valid OIDC origins"]
-    if origin.removeprefix("https://") in reserved_hosts:
+    if host in reserved_hosts:
         return ["KODERA_APP_ORIGIN must be distinct from the primary web, API, Matrix, LiveKit and OIDC hosts"]
     return []
 
@@ -3819,6 +3822,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     topology_refused = (
         ("a second web origin on single", setting(filled, "KODERA_APP_ORIGIN", "https://app.example.net"),
          "KODERA_APP_ORIGIN requires the split topology"),
+        *(("an app origin outside the tenant subdomains", setting(split_env, "KODERA_APP_ORIGIN", "https://" + host),
+           "KODERA_APP_ORIGIN must be a subdomain of KODERA_MATRIX_DOMAIN")
+          for host in ("app.example.org", "example.net", "notexample.net")),
         *(("a malformed app origin", setting(split_env, "KODERA_APP_ORIGIN", value),
            "KODERA_APP_ORIGIN must be an exact public HTTPS origin")
           for value in ("http://app.example.net", "https://u:p@app.example.net", "https://@app.example.net",

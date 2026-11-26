@@ -197,7 +197,7 @@ def configure(document, environment=None):
     document["ip_range_whitelist"] = []
     document["allow_public_rooms_over_federation"] = False
     document["allow_public_rooms_without_auth"] = False
-    document.setdefault("user_directory", {})["search_all_users"] = False
+    document["user_directory"] = dict(document.get("user_directory") or {}, search_all_users=False)
     if not allowlist:
         document["trusted_key_servers"] = []
         document["suppress_key_server_warning"] = True

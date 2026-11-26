@@ -343,7 +343,8 @@ def selftest():
         assert check.preflight_env(TEMPLATE.read_text(), community_split.replace('DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n', 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n'))
         app_split = generate(args(topology='split', app_origin='https://app.example.org')).read_text()
         assert 'KODERA_APP_ORIGIN=https://app.example.org\n' in app_split
-        for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org')):
+        for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org'),
+                        dict(topology='split', app_origin='https://app.example.net')):
             try:
                 generate(args(**changes))
             except ValueError:
@@ -389,7 +390,7 @@ def main():
     parser.add_argument('--topology', choices=TOPOLOGIES, default='single',
                         help='single: one origin serves everything (default); split: backends only, web client hosted elsewhere')
     parser.add_argument('--app-origin', default=os.environ.get('KODERA_APP_ORIGIN'),
-                        help='Optional second HTTPS web origin for the split topology')
+                        help='Optional second HTTPS web origin on a subdomain of the Matrix domain for the split topology')
     parser.add_argument('--generate-only', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--selftest', action='store_true')

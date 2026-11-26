@@ -428,17 +428,19 @@ def _effective_community_server_env(
         if service in split_services:
             env_raw.update(split_services[service].environment)
 
-    var_re = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::-([^}]*)|:\?([^}]*))?\}")
+    var_re = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::([-?+])([^}]*))?\}")
 
     def expand(expr: str) -> str:
         def repl(match: re.Match[str]) -> str:
-            name, default, required = match.group(1), match.group(2), match.group(3)
+            name, operator, operand = match.groups()
             val = values.get(name, "")
+            if operator == "+":
+                return operand if val else ""
             if val:
                 return val
-            if required is not None:
+            if operator == "?":
                 raise AssertionError(f"missing required Compose variable {name}")
-            return default or ""
+            return operand or ""
 
         prev = None
         current = expr
@@ -455,22 +457,32 @@ def _effective_community_server_env(
 
 
 @pytest.mark.parametrize(
-    "topology,fetch_site",
-    [("single", "same-origin"), ("split", "same-site")],
+    "topology,fetch_site,app_origin",
+    [
+        ("single", "same-origin", None),
+        ("split", "same-site", None),
+        ("split", "same-site", ""),
+        ("split", "same-site", "https://app.example.org"),
+    ],
 )
 def test_community_compose_single_and_split_console_origins_admit_web_and_refuse_foreign(
-    settings, ready, topology, fetch_site
+    settings, ready, topology, fetch_site, app_origin
 ):
-    resolved = _effective_community_server_env(
-        topology, {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"}
-    )
-    assert resolved["KODERA_CONSOLE_ORIGINS"] == "https://community.example.org"
+    values = {"KODERA_DOMAIN": "community.example.org", "KODERA_MATRIX_DOMAIN": "example.org"}
+    if app_origin is not None:
+        values["KODERA_APP_ORIGIN"] = app_origin
+    resolved = _effective_community_server_env(topology, values)
+    origins = ["https://community.example.org"]
+    if app_origin:
+        origins.append(app_origin)
+    assert resolved["KODERA_CONSOLE_ORIGINS"] == ",".join(origins)
     settings.KODERA_CONSOLE_ORIGINS = resolved["KODERA_CONSOLE_ORIGINS"]
 
     body = json.dumps({"slug": ready.organisation.slug}).encode()
-    ok = post(body, HTTP_ORIGIN="https://community.example.org", HTTP_SEC_FETCH_SITE=fetch_site)
-    assert_headers(ok, 200)
-    assert ok.json()["issuer"] == ready.organisation.issuer
+    for origin in origins:
+        ok = post(body, HTTP_ORIGIN=origin, HTTP_SEC_FETCH_SITE=fetch_site)
+        assert_headers(ok, 200)
+        assert ok.json()["issuer"] == ready.organisation.issuer
 
     refused = post(body, HTTP_ORIGIN=ATTACKER, HTTP_SEC_FETCH_SITE="cross-site")
     assert_headers(refused, 403, quota=False)
