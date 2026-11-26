@@ -40,6 +40,8 @@ KODERA_MUTATION_RATE_PER_MINUTE = 60
 # The Console's browser origins, the only ones CORS names (core/api/edge.py) and discovery admits.
 # None: no browser origin. A serving profile reads KODERA_CONSOLE_ORIGINS.
 KODERA_CONSOLE_ORIGINS: str | None = None
+KODERA_APP_ORIGIN: str | None = None
+KODERA_SELF_SERVE_DISPOSABLE_DOMAINS: frozenset[str] = frozenset()
 USE_TZ = True
 TIME_ZONE = "UTC"
 APPEND_SLASH = False

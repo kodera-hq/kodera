@@ -32,6 +32,7 @@ from apps.billing.payments.port import (
     ReturnUrlRequiredError,
 )
 from apps.billing.services import IdempotencyKeyReuseError
+from apps.billing.switch import BillingDisabledError
 from core.api import lanes, problems
 from core.api.idempotency import KEY_HEADER, is_malformed, is_missing
 from core.api.scopes import Operation, declares
@@ -147,6 +148,8 @@ def _run_post(
         response = views._problem(403, request_id)
     except views._RefusedError:
         response = views._problem(403, request_id)
+    except BillingDisabledError:
+        response = views._billing_disabled(request_id)
     except boosts.WithdrawalWaiverRequiredError as exc:
         detail = (
             exc.args[0]

@@ -40,6 +40,8 @@ KODERA_STAFF_ISSUER = "https://identity.staff.test/realms/kodera-staff"
 # Test-only: the tests bill, whatever the environment says, so a shell that turns billing off
 # does not redden the billing suites; a test that needs billing off sets it (QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = True
+KODERA_APP_ORIGIN = None
+KODERA_SELF_SERVE_DISPOSABLE_DOMAINS = frozenset()
 
 # Test-only: the test database is disposable, never a live one, so the intake is admitted
 # (docs/specs/FIRST_OWNER_BOOTSTRAP.md §3.8), and its contact seal key is a fixed synthetic value

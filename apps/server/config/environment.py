@@ -226,11 +226,51 @@ def legal_text_origin(environment: Mapping[str, str]) -> str | None:
     (`getLegalDocumentText`), so it ends up in order confirmations: `https`, an ASCII DNS name
     (no IP literal), an optional port, nothing else. Unset or empty, no URL is given; anything
     else stops the process."""
-    value = environment.get("KODERA_LEGAL_TEXT_ORIGIN", "").strip()
+    return _https_origin(environment, "KODERA_LEGAL_TEXT_ORIGIN")
+
+
+def app_origin(environment: Mapping[str, str]) -> str | None:
+    """Canonical browser origin for shared-realm customer workspaces in split deployments."""
+    from services.identity.discovery_input import allowed_origins
+
+    origin = _https_origin(environment, "KODERA_APP_ORIGIN")
+    raw = environment.get("KODERA_CONSOLE_ORIGINS", "").strip()
+    if not raw:
+        return origin
+    origins = allowed_origins(
+        raw, loopback_http=environment.get("DJANGO_SETTINGS_MODULE") == "config.settings.e2e"
+    )
+    if origin:
+        if not origins or origin not in origins:
+            raise ImproperlyConfigured("KODERA_APP_ORIGIN must be listed in KODERA_CONSOLE_ORIGINS")
+        return origin
+    if origins and len(origins) > 1:
+        raise ImproperlyConfigured("Multiple console origins require KODERA_APP_ORIGIN")
+    return next(iter(origins)) if origins else None
+
+
+def self_serve_disposable_domains(environment: Mapping[str, str]) -> frozenset[str]:
+    """Additional disposable email domains, including their subdomains; comma separated."""
+    domains = set()
+    for field in environment.get("KODERA_SELF_SERVE_DISPOSABLE_DOMAINS", "").split(","):
+        if not (domain := field.strip().rstrip(".")):
+            continue
+        try:
+            domain = domain.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            raise ImproperlyConfigured("Invalid KODERA_SELF_SERVE_DISPOSABLE_DOMAINS") from None
+        if not LEGAL_TEXT_HOST.fullmatch(domain):
+            raise ImproperlyConfigured("Invalid KODERA_SELF_SERVE_DISPOSABLE_DOMAINS")
+        domains.add(domain)
+    return frozenset(domains)
+
+
+def _https_origin(environment: Mapping[str, str], name: str) -> str | None:
+    value = environment.get(name, "").strip()
     if not value:
         return None
     refused = ImproperlyConfigured(
-        "KODERA_LEGAL_TEXT_ORIGIN is https://<dns name>[:port], with no path, query or user"
+        f"{name} is https://<dns name>[:port], with no path, query or user"
     )
     try:
         parsed = urlsplit(value)

@@ -31,6 +31,7 @@ from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
 from apps.outbox.realm.keycloak import origins_from_environment as realm_origins_from_environment
 from config.environment import (
+    app_origin,
     auth_trust,
     billing_enabled,
     ee_audit_signing_seed,
@@ -99,6 +100,7 @@ KODERA_CONTACT_SEAL_KEY = sealing_key_from_environment(os.environ, "KODERA_CONTA
 # The trust list the API verifies with, read here to verify a pilot realm's published keys against
 # it (§5.5 step 3.3). A loopback issuer is refused unless this profile is selected as
 # config.settings.e2e_operator.
+KODERA_APP_ORIGIN = app_origin(os.environ)
 KODERA_AUTH_TRUST = auth_trust(os.environ, loopback_issuers=KODERA_LOOPBACK_ISSUERS)
 
 # Required only when issuing or reissuing, never at existing command/profile startup.

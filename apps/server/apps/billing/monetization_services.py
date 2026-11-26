@@ -30,6 +30,7 @@ from .models import (
 )
 from .payments.port import CONNECT_ACCOUNT_ID, LinkRequest
 from .payments.services import check_return_url
+from .switch import require_billing
 
 ADMIN_CONNECT_ROLES = frozenset({"org_owner", "org_admin"})
 DAC7_EXPORT_ROLES = frozenset({"org_owner", "org_billing"})
@@ -42,7 +43,7 @@ def _resolve_workspace_or_not_found(organisation_id: UUID) -> UUID:
     return ws_id
 
 
-def _resolve_caller_and_user(
+def _resolve_monetization_writer(
     *,
     verified: VerifiedAccessToken,
     organisation_id: UUID,
@@ -59,6 +60,7 @@ def _resolve_caller_and_user(
             raise BillingNotFoundError()
         person, _ = resolved
         ws_id = _resolve_workspace_or_not_found(organisation_id)
+        require_billing()
         return caller, person.id, ws_id
 
 
@@ -191,7 +193,7 @@ def start_boost_checkout_for_caller(
     payload: dict[str, Any],
     provider: Any | None = None,
 ) -> dict[str, Any]:
-    _, user_id, ws_id = _resolve_caller_and_user(
+    _, user_id, ws_id = _resolve_monetization_writer(
         verified=verified,
         organisation_id=organisation_id,
         scope="workspace_monetization:act",
@@ -243,7 +245,7 @@ def start_connect_onboarding_for_caller(
     payload: dict[str, Any],
     provider: Any | None = None,
 ) -> dict[str, Any]:
-    _, user_id, ws_id = _resolve_caller_and_user(
+    _, user_id, ws_id = _resolve_monetization_writer(
         verified=verified,
         organisation_id=organisation_id,
         scope="workspace_monetization:create",
@@ -278,7 +280,7 @@ def create_vip_tier_for_caller(
     organisation_id: UUID,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    _, _, ws_id = _resolve_caller_and_user(
+    _, _, ws_id = _resolve_monetization_writer(
         verified=verified,
         organisation_id=organisation_id,
         scope="workspace_monetization:create",
@@ -323,7 +325,7 @@ def start_vip_pass_checkout_for_caller(
     payload: dict[str, Any],
     provider: Any | None = None,
 ) -> dict[str, Any]:
-    caller, user_id, ws_id = _resolve_caller_and_user(
+    caller, user_id, ws_id = _resolve_monetization_writer(
         verified=verified,
         organisation_id=organisation_id,
         scope="workspace_monetization:act",

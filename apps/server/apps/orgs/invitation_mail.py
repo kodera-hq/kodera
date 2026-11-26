@@ -18,6 +18,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from django.conf import settings
@@ -75,6 +76,9 @@ def invitation_link() -> str:
 def organisation_invitation_link(base: str, organisation: Organisation) -> str:
     """`<base>/<organisation id>/<slug>`, like the owner claim link: the Console discovers the
     organisation's realm from it before sign-in. The outbox appends the token as the fragment."""
+    app_origin = getattr(settings, "KODERA_APP_ORIGIN", None)
+    if app_origin and organisation.shared_realm and not organisation.is_default_community:
+        base = app_origin + urlsplit(base).path
     return organisation_claim_link(
         {"KODERA_OWNER_CLAIM_LINK": base},
         _origins(),

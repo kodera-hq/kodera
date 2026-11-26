@@ -26,6 +26,7 @@ from apps.workspaces.templates import (
 from apps.workspaces.warm_pool import (
     OFFICIAL_CONNECTOR_IDS,
     RESERVED_SLUGS,
+    SLUG_PATTERN,
     InstantClaimInputError,
     InstantClaimRequest,
     build_instant_claim_plan,
@@ -224,7 +225,8 @@ def test_enabled_connectors_are_deduplicated_preserving_order() -> None:
 
 @pytest.mark.parametrize("reserved", sorted(RESERVED_SLUGS))
 def test_reserved_platform_slugs_are_rejected(reserved: str) -> None:
-    assert _errors({**VALID_CLAIM_PAYLOAD, "slug": reserved}) == [("/slug", "reserved")]
+    reason = "reserved" if SLUG_PATTERN.fullmatch(reserved) else "invalid"
+    assert _errors({**VALID_CLAIM_PAYLOAD, "slug": reserved}) == [("/slug", reason)]
 
 
 @pytest.mark.parametrize(

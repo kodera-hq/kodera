@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
@@ -13,6 +14,7 @@ from apps.workspaces.quota_http import respond_once
 from apps.workspaces.self_serve import (
     SelfServeAuthForbiddenError,
     SelfServeCaller,
+    SelfServeDisposableEmailError,
     SelfServeRateLimitError,
     SelfServeSlugTakenError,
     SelfServeUnavailableError,
@@ -21,19 +23,37 @@ from apps.workspaces.self_serve import (
     parse_self_serve_request,
     resolve_self_serve_caller_from_token,
 )
+from core.api.edge import SlidingWindow, client_address, principal_key, rate_limited
 from core.api.idempotency import PROBLEM_TYPE, StoredResponse
 from core.api.scopes import declares
 from services.identity.access_tokens import TokenVerificationError
+from services.identity.discovery_policy import DiscoveryUnavailableError, normalized_peer
 
 from . import responses
 from .permissions import CREATE_SELF_SERVE_WORKSPACE
 
 LOG = logging.getLogger(__name__)
 MAX_BODY_BYTES = 16 * 1024
+# Per rolling minute per API process, in addition to the durable three-workspace owner cap.
+SIGNUP_IP_LIMIT = 60
+SIGNUP_IDENTITY_LIMIT = 10
+signup_window = SlidingWindow()
 
 
 def _resolve_caller(request: HttpRequest) -> SelfServeCaller:
     return resolve_self_serve_caller_from_token(responses.bearer(request))
+
+
+def _throttle(request: HttpRequest, key: str, limit: int) -> HttpResponse | None:
+    decision = signup_window.charge(key, limit=limit)
+    if decision.admitted:
+        return None
+    response = rate_limited(request, decision)
+    # The outer general mutation bucket may still have room.
+    response["RateLimit-Limit"] = str(limit)
+    response["RateLimit-Remaining"] = "0"
+    response["RateLimit-Reset"] = str(decision.reset_s)
+    return response
 
 
 def _parse_json_body(request: HttpRequest) -> dict[str, Any] | tuple[int, str]:
@@ -114,8 +134,10 @@ def _execute_self_serve(
             {"slug": exc.slug, "suggestions": exc.suggestions},
         )
 
+    origin = settings.KODERA_APP_ORIGIN
     return StoredResponse(
         status=201,
+        location=origin + created["redirect_path"] if origin else None,
         body=json.dumps(created, separators=(",", ":")).encode("utf-8"),
         content_type="application/json",
     )
@@ -131,6 +153,19 @@ def self_serve_workspace(request: HttpRequest) -> HttpResponse:
             return responses.finish(response, request_id)
 
         caller = _resolve_caller(request)
+        address = client_address(request.META, settings.KODERA_TRUSTED_EDGE)
+        try:
+            peer = normalized_peer(address)
+        except DiscoveryUnavailableError:
+            peer = "unknown"
+        limited = _throttle(request, principal_key("signup-ip", peer), SIGNUP_IP_LIMIT)
+        if limited is not None:
+            return responses.finish(limited, request_id)
+        limited = _throttle(
+            request, principal_key(caller.issuer, caller.subject), SIGNUP_IDENTITY_LIMIT
+        )
+        if limited is not None:
+            return responses.finish(limited, request_id)
 
         def authority(_event: object) -> None:
             _resolve_caller(request)
@@ -145,6 +180,8 @@ def self_serve_workspace(request: HttpRequest) -> HttpResponse:
         )
     except TokenVerificationError:
         response = responses.problem("unauthenticated", request_id)
+    except SelfServeDisposableEmailError:
+        response = responses.problem("forbidden", request_id, code="disposable-email-not-allowed")
     except SelfServeAuthForbiddenError:
         response = responses.problem("forbidden", request_id)
     except SelfServeRateLimitError as exc:
