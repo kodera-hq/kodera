@@ -155,8 +155,10 @@ export function purgeDocsCollabDatabases(clearRegistryKey = false): void {
   const docsDatabases = readRegisteredDocsDatabases()
   if (clearRegistryKey) {
     try {
-      if (window.localStorage.getItem(DOCS_COLLAB_REGISTRY_KEY) !== null) {
-        window.localStorage.removeItem(DOCS_COLLAB_REGISTRY_KEY)
+      for (const key of Object.keys(window.localStorage)) {
+        if (key === DOCS_COLLAB_REGISTRY_KEY || key.startsWith(`${DOCS_COLLAB_REGISTRY_KEY}.`)) {
+          window.localStorage.removeItem(key)
+        }
       }
     } catch {
       // Ignore restricted localStorage environments.
