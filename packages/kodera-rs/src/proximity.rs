@@ -84,6 +84,7 @@ pub enum ProximityRadioError {
     EpochOutOfWindow,
     CounterExhausted,
     ReplayRejected,
+    ReplayCapacityExhausted,
     ReflectionRejected,
     ChallengeMismatch,
     ClockSkewExceeded,
@@ -108,6 +109,7 @@ impl fmt::Display for ProximityRadioError {
             Self::EpochOutOfWindow => "rotating proximity epoch is outside active window",
             Self::CounterExhausted => "ephemeral epoch token counter exhausted",
             Self::ReplayRejected => "replayed proximity token or handshake nonce rejected",
+            Self::ReplayCapacityExhausted => "proximity replay cache capacity exhausted",
             Self::ReflectionRejected => "self-reflected peer token or nonce rejected",
             Self::ChallengeMismatch => "QUIC handshake response does not match challenge",
             Self::ClockSkewExceeded => "QUIC handshake timestamp exceeds allowed clock skew",
@@ -626,8 +628,6 @@ pub struct EphemeralTokenVerifier {
     scope_tag: String,
     workspace_master_key: [u8; 32],
     highest_counter_by_peer: BTreeMap<(u32, [u8; 8]), u32>,
-    insertion_order: VecDeque<(u32, [u8; 8])>,
-    max_tracked_peers: usize,
 }
 
 impl fmt::Debug for EphemeralTokenVerifier {
@@ -658,8 +658,6 @@ impl EphemeralTokenVerifier {
             scope_tag,
             workspace_master_key,
             highest_counter_by_peer: BTreeMap::new(),
-            insertion_order: VecDeque::new(),
-            max_tracked_peers: MAX_REPLAY_ENTRIES,
         })
     }
 
@@ -717,8 +715,6 @@ impl EphemeralTokenVerifier {
         // Purge expired epochs before checking capacity.
         self.highest_counter_by_peer
             .retain(|(ep, _), _| allowed_epochs.contains(ep));
-        self.insertion_order
-            .retain(|(ep, id)| self.highest_counter_by_peer.contains_key(&(*ep, *id)));
 
         let peer_key = (verified.epoch, verified.rolling_pseudonym);
         if let Some(&prev_counter) = self.highest_counter_by_peer.get(&peer_key) {
@@ -730,20 +726,16 @@ impl EphemeralTokenVerifier {
             return Ok(verified);
         }
 
-        if self.highest_counter_by_peer.len() >= self.max_tracked_peers {
-            if let Some(evicted) = self.insertion_order.pop_front() {
-                self.highest_counter_by_peer.remove(&evicted);
-            }
+        if self.highest_counter_by_peer.len() >= MAX_REPLAY_ENTRIES {
+            return Err(ProximityRadioError::ReplayCapacityExhausted);
         }
         self.highest_counter_by_peer
             .insert(peer_key, verified.counter);
-        self.insertion_order.push_back(peer_key);
         Ok(verified)
     }
 
     pub fn clear(&mut self) {
         self.highest_counter_by_peer.clear();
-        self.insertion_order.clear();
     }
 }
 
@@ -1369,6 +1361,10 @@ impl ProximityMdnsQuicVerifier {
             return Err(ProximityRadioError::ReplayRejected);
         }
 
+        if self.seen_challenge_nonces.len() >= MAX_REPLAY_ENTRIES {
+            return Err(ProximityRadioError::ReplayCapacityExhausted);
+        }
+
         let responder_verified = self
             .token_verifier
             .verify_stateless(&responder_token, now_unix_secs)?;
@@ -1376,7 +1372,8 @@ impl ProximityMdnsQuicVerifier {
             .token_verifier
             .verify_and_accept(&challenge.initiator_token, now_unix_secs)?;
 
-        self.record_challenge_nonce(now_unix_secs, challenge.challenge_nonce);
+        self.seen_challenge_nonces
+            .push_back((now_unix_secs, challenge.challenge_nonce));
 
         let mac_tag = self.compute_response_mac(
             now_unix_secs,
@@ -1448,6 +1445,10 @@ impl ProximityMdnsQuicVerifier {
             return Err(ProximityRadioError::ReplayRejected);
         }
 
+        if self.seen_response_pairs.len() >= MAX_REPLAY_ENTRIES {
+            return Err(ProximityRadioError::ReplayCapacityExhausted);
+        }
+
         let initiator_verified = self
             .token_verifier
             .verify_stateless(&sent_challenge.initiator_token, now_unix_secs)?;
@@ -1455,11 +1456,11 @@ impl ProximityMdnsQuicVerifier {
             .token_verifier
             .verify_and_accept(&response.responder_token, now_unix_secs)?;
 
-        self.record_response_pair(
+        self.seen_response_pairs.push_back((
             now_unix_secs,
             response.challenge_nonce,
             response.responder_nonce,
-        );
+        ));
         let channel_binding_key = self.derive_channel_binding(sent_challenge, response)?;
         Ok(VerifiedQuicPeerHandshake {
             initiator: initiator_verified,
@@ -1536,26 +1537,6 @@ impl ProximityMdnsQuicVerifier {
         self.seen_response_pairs
             .retain(|(ts, _, _)| now_unix_secs.saturating_sub(*ts) <= horizon);
     }
-
-    fn record_challenge_nonce(&mut self, now_unix_secs: u64, nonce: [u8; 16]) {
-        if self.seen_challenge_nonces.len() >= MAX_REPLAY_ENTRIES {
-            self.seen_challenge_nonces.pop_front();
-        }
-        self.seen_challenge_nonces.push_back((now_unix_secs, nonce));
-    }
-
-    fn record_response_pair(
-        &mut self,
-        now_unix_secs: u64,
-        challenge_nonce: [u8; 16],
-        responder_nonce: [u8; 16],
-    ) {
-        if self.seen_response_pairs.len() >= MAX_REPLAY_ENTRIES {
-            self.seen_response_pairs.pop_front();
-        }
-        self.seen_response_pairs
-            .push_back((now_unix_secs, challenge_nonce, responder_nonce));
-    }
 }
 
 #[cfg(test)]
@@ -1574,6 +1555,129 @@ mod tests {
             *slot = seed.wrapping_add(u8::try_from(idx * 7 + 1).expect("fits u8"));
         }
         key
+    }
+
+    fn capacity_test_rotator(peer: usize) -> EphemeralTokenRotator {
+        let mut seed = sample_key(0x42);
+        seed[..8].copy_from_slice(&u64::try_from(peer).unwrap().to_be_bytes());
+        EphemeralTokenRotator::new(test_org("capacity"), "room", sample_key(0x10), seed).unwrap()
+    }
+
+    #[test]
+    fn token_cache_preserves_live_counters_until_epoch_skew_expires() {
+        let now = 1_800_000_100;
+        let mut verifier =
+            EphemeralTokenVerifier::new(test_org("capacity"), "room", sample_key(0x10)).unwrap();
+        let mut first_peer = capacity_test_rotator(0);
+        let first = first_peer.emit(now).unwrap();
+        verifier.verify_and_accept(&first, now).unwrap();
+        for peer in 1..MAX_REPLAY_ENTRIES {
+            let token = capacity_test_rotator(peer).emit(now).unwrap();
+            verifier.verify_and_accept(&token, now).unwrap();
+        }
+        let counters = verifier.highest_counter_by_peer.clone();
+        assert_eq!(counters.len(), MAX_REPLAY_ENTRIES);
+        let mut newcomer = capacity_test_rotator(MAX_REPLAY_ENTRIES);
+        let next_epoch = 1_800_000_900;
+        let expiry = next_epoch + PROXIMITY_EPOCH_CLOCK_SKEW_SECS;
+        assert_eq!(
+            verifier.verify_and_accept(&newcomer.emit(now).unwrap(), now),
+            Err(ProximityRadioError::ReplayCapacityExhausted)
+        );
+        let new_token = newcomer.emit(next_epoch).unwrap();
+        assert_eq!(
+            verifier.verify_and_accept(&new_token, expiry - 1),
+            Err(ProximityRadioError::ReplayCapacityExhausted)
+        );
+        assert_eq!(verifier.highest_counter_by_peer, counters);
+        assert_eq!(
+            verifier.verify_and_accept(&first, expiry - 1),
+            Err(ProximityRadioError::ReplayRejected)
+        );
+        verifier
+            .verify_and_accept(&first_peer.emit(next_epoch - 1).unwrap(), expiry - 1)
+            .unwrap();
+        verifier.verify_and_accept(&new_token, expiry).unwrap();
+        assert_eq!(verifier.highest_counter_by_peer.len(), 1);
+    }
+
+    #[test]
+    fn full_handshake_nonce_caches_refuse_peers_without_consuming_their_tokens() {
+        let now = 1_800_000_100;
+        let verifier = || {
+            ProximityMdnsQuicVerifier::new(test_org("capacity"), "room", sample_key(0x10)).unwrap()
+        };
+        let mut alice = verifier();
+        let mut bob = verifier();
+        let mut alice_peer = capacity_test_rotator(0);
+        let mut bob_peer = capacity_test_rotator(1);
+        let response_nonce = [0xff; 16];
+        let mut exchange = |id: usize| {
+            let challenge = alice
+                .build_challenge(
+                    alice_peer.emit(now).unwrap(),
+                    (id as u128).to_be_bytes(),
+                    now,
+                )
+                .unwrap();
+            let (response, _) = bob
+                .accept_challenge_and_respond(
+                    &challenge,
+                    bob_peer.emit(now).unwrap(),
+                    response_nonce,
+                    now,
+                )
+                .unwrap();
+            alice.verify_response(&challenge, &response, now).unwrap();
+            (challenge, response)
+        };
+        let (first_challenge, first_response) = exchange(1);
+        for id in 2..=MAX_REPLAY_ENTRIES {
+            exchange(id);
+        }
+        let challenges = bob.seen_challenge_nonces.clone();
+        let responses = alice.seen_response_pairs.clone();
+        assert_eq!(challenges.len(), MAX_REPLAY_ENTRIES);
+        assert_eq!(responses.len(), MAX_REPLAY_ENTRIES);
+        let alice_counters = alice.token_verifier.highest_counter_by_peer.clone();
+        let bob_counters = bob.token_verifier.highest_counter_by_peer.clone();
+
+        let initiator = capacity_test_rotator(2).emit(now).unwrap();
+        let responder = capacity_test_rotator(3).emit(now).unwrap();
+        let nonce = [0xaa; 16];
+        let challenge = alice.build_challenge(initiator, nonce, now).unwrap();
+        let (response, _) = verifier()
+            .accept_challenge_and_respond(&challenge, responder, response_nonce, now)
+            .unwrap();
+        assert_eq!(
+            bob.accept_challenge_and_respond(&challenge, responder, response_nonce, now),
+            Err(ProximityRadioError::ReplayCapacityExhausted)
+        );
+        assert_eq!(
+            alice.verify_response(&challenge, &response, now),
+            Err(ProximityRadioError::ReplayCapacityExhausted)
+        );
+        assert_eq!(bob.seen_challenge_nonces, challenges);
+        assert_eq!(alice.seen_response_pairs, responses);
+        assert_eq!(bob.token_verifier.highest_counter_by_peer, bob_counters);
+        assert_eq!(alice.token_verifier.highest_counter_by_peer, alice_counters);
+        assert_eq!(
+            bob.accept_challenge_and_respond(&first_challenge, responder, response_nonce, now),
+            Err(ProximityRadioError::ReplayRejected)
+        );
+        assert_eq!(
+            alice.verify_response(&first_challenge, &first_response, now),
+            Err(ProximityRadioError::ReplayRejected)
+        );
+
+        let later = now + 2 * MAX_QUIC_HANDSHAKE_SKEW_SECS + 1;
+        let challenge = alice.build_challenge(initiator, nonce, later).unwrap();
+        let (response, _) = bob
+            .accept_challenge_and_respond(&challenge, responder, response_nonce, later)
+            .unwrap();
+        alice.verify_response(&challenge, &response, later).unwrap();
+        assert_eq!(bob.seen_challenge_nonces.len(), 1);
+        assert_eq!(alice.seen_response_pairs.len(), 1);
     }
 
     #[test]
