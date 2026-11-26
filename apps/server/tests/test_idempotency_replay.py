@@ -278,6 +278,37 @@ def test_optional_authority_adapter_passes_callback_to_the_actual_store_boundary
     )
 
 
+def test_optional_fingerprint_context_binds_replay_without_changing_legacy_hashes(monkeypatch):
+    hashes = []
+
+    def actual_call(**arguments):
+        hashes.append(arguments["body_sha256"])
+        return Executed(response=CREATED, stored=True)
+
+    monkeypatch.setattr(store, "run_once", actual_call)
+    for context, body in (
+        (None, b"{}"),
+        ("device-a", b"{}"),
+        ("device-a", b"{ }"),
+        ("device-b", b"{}"),
+        ("device-a", b'{"changed":true}'),
+    ):
+        request = FACTORY.post(
+            PATH, body, content_type="application/json", headers={"Idempotency-Key": KEY}
+        )
+        adapter.respond_once(
+            request,
+            issuer=ISSUER,
+            subject=SUBJECT,
+            request_id=REQUEST_ID,
+            handler=lambda: CREATED,
+            fingerprint_context=context,
+        )
+    assert hashes[0] == fingerprint.body_sha256(b"{}")
+    assert hashes[1] == hashes[2]
+    assert len({hashes[0], hashes[1], hashes[3], hashes[4]}) == 4
+
+
 @pytest.mark.parametrize(
     ("outcome", "expected", "replayed"),
     [

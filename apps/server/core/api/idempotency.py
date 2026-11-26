@@ -8,6 +8,7 @@ rendered from one `StoredResponse`, so they differ only by `Idempotency-Replayed
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -177,6 +178,7 @@ def respond_once(
     authority: AuthorityCallback | None = None,
     final_authority: FinalAuthorityCallback | None = None,
     operation_ref: str | None = None,
+    fingerprint_context: str | None = None,
 ) -> HttpResponse:
     """Answer a POST at most once per key: run, replay, or refuse it as §8 says."""
     if request.method != store.METHOD:
@@ -193,22 +195,27 @@ def respond_once(
     scope = scope_for(request, issuer=issuer, subject=subject, key=supplied)
     if scope is None:
         return render(problem(MALFORMED, request_id))
+    body_hash = fingerprint.body_sha256(request.body)
+    if fingerprint_context is not None:
+        # Bind credential-bearing answers to verified caller context without changing
+        # the scope or fingerprint semantics of existing callers.
+        body_hash = hashlib.sha256(
+            json.dumps([fingerprint_context, body_hash], separators=(",", ":")).encode()
+        ).hexdigest()
     if final_authority is not None:
         outcome = store.run_once(
             scope=scope,
-            body_sha256=fingerprint.body_sha256(request.body),
+            body_sha256=body_hash,
             handler=handler,
             authority=authority,
             final_authority=final_authority,
         )
     elif authority is None:
-        outcome = store.run_once(
-            scope=scope, body_sha256=fingerprint.body_sha256(request.body), handler=handler
-        )
+        outcome = store.run_once(scope=scope, body_sha256=body_hash, handler=handler)
     else:
         outcome = store.run_once(
             scope=scope,
-            body_sha256=fingerprint.body_sha256(request.body),
+            body_sha256=body_hash,
             handler=handler,
             authority=authority,
         )

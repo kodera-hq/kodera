@@ -5536,6 +5536,81 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "listDocumentRoleGrants": {
+    operationId: "listDocumentRoleGrants",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+      "Cache-Control": "no-store"
+    },
+    body: {
+      "revision": 2,
+      "data": [
+        {
+          "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+          "name": "Engineering",
+          "slug": "engineering",
+          "role": "editor"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putDocumentRoleGrant": {
+    operationId: "putDocumentRoleGrant",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants/{role_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+      "Cache-Control": "no-store"
+    },
+    body: {
+      "revision": 2,
+      "data": [
+        {
+          "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+          "name": "Engineering",
+          "slug": "engineering",
+          "role": "editor"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "revokeDocumentRoleGrant": {
+    operationId: "revokeDocumentRoleGrant",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants/{role_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+      "Cache-Control": "no-store"
+    },
+    body: {
+      "revision": 2,
+      "data": [
+        {
+          "workspaceRoleId": "00000000-0000-7000-8000-000000000002",
+          "name": "Engineering",
+          "slug": "engineering",
+          "role": "editor"
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
   "listDocumentBacklinks": {
     operationId: "listDocumentBacklinks",
     method: "get",

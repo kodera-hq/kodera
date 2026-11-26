@@ -61,9 +61,13 @@ def restore_proximity_test_migrations() -> None:
     targets = [
         node
         for node in executor.loader.graph.leaf_nodes()
-        if node[0] not in {"e2ee", "confidential"}
+        if node[0] not in {"e2ee", "confidential", "docs"}
     ]
-    targets.extend([E2EE_0001, ("confidential", None)])
+    # Document grants depend on e2ee 0002; an older e2ee profile must also target
+    # their predecessor rather than simultaneously requesting incompatible leaves.
+    targets.extend(
+        [E2EE_0001, ("confidential", None), ("docs", "0012_confidential_collab_admission")]
+    )
     executor.migrate(targets)
     after = MigrationExecutor(connection)
     assert after.migration_plan(targets) == []

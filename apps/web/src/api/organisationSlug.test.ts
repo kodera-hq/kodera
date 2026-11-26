@@ -129,6 +129,7 @@ const LOCATIONS: readonly [string, Segments][] = [
 // contract test (apps/server/tests/test_customer_read_contract.py) holds the same three
 // locations to the same rule and to `minLength: 1` / `maxLength: 64` beside the pattern,
 // so the two pins cannot drift apart unnoticed.
+// `DocumentRoleGrant.slug` reuses this rule for document access grants.
 const WORKSPACE_ROLE_SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
 const BOOKING_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9](?![\s\S])/
 const EXTENSION_MARKETPLACE_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9](?![\s\S])/
@@ -143,6 +144,7 @@ const WORKSPACE_ROLE_LOCATIONS: readonly [string, Segments][] = [
     'WorkspaceRolePatch.slug',
     ['components', 'schemas', 'WorkspaceRolePatch', 'properties', 'slug'],
   ],
+  ['DocumentRoleGrant.slug', ['components', 'schemas', 'DocumentRoleGrant', 'properties', 'slug']],
 ]
 
 const BOOKING_SLUG_LOCATIONS: readonly [string, Segments][] = [

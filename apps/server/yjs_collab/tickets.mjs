@@ -6,6 +6,7 @@ export class TicketRefused extends Error {
 }
 const legacyFields = ['v', 'organisation', 'document', 'membership', 'identity', 'issuer', 'subject', 'role', 'issued', 'expires', 'nonce'].sort()
 const confidentialFields = ['v', 'organisation', 'document', 'membership', 'identity', 'issuer', 'subject', 'role', 'confidential', 'epoch', 'issued', 'expires', 'nonce'].sort()
+const deviceFields = [...confidentialFields, 'device'].sort()
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 function decoded(text) {
   if (!/^[A-Za-z0-9_-]+$/.test(text)) throw new TicketRefused()
@@ -25,7 +26,8 @@ export function verify(token, key, now = Math.floor(Date.now() / 1000)) {
   if (!claims || typeof claims !== 'object' || Array.isArray(claims)) throw new TicketRefused()
   const keys = Object.keys(claims).sort().join()
   const isLegacy = keys === legacyFields.join()
-  const isConfidential = keys === confidentialFields.join()
+  const hasDevice = keys === deviceFields.join()
+  const isConfidential = keys === confidentialFields.join() || hasDevice
   if ((!isLegacy && !isConfidential) || claims.v !== 1 ||
       !Number.isSafeInteger(claims.issued) || !Number.isSafeInteger(claims.expires) ||
       claims.expires <= now || claims.issued > now + 5 || claims.expires <= claims.issued || claims.expires - claims.issued > 300 ||
@@ -33,6 +35,7 @@ export function verify(token, key, now = Math.floor(Date.now() / 1000)) {
       !['organisation', 'document', 'membership', 'identity', 'nonce'].every(name => typeof claims[name] === 'string' && uuid.test(claims[name])) ||
       !['issuer', 'subject'].every(name => typeof claims[name] === 'string' && claims[name].length > 0 && claims[name].length <= 2048 && !/[\u0000-\u0020\u007f]/.test(claims[name])) ||
       claims.subject.length > 255 || !/^[\x21-\x7e]+$/.test(claims.subject)) throw new TicketRefused()
+  if (hasDevice && (!claims.confidential || typeof claims.device !== 'string' || !uuid.test(claims.device))) throw new TicketRefused()
   if (isConfidential) {
     if (typeof claims.confidential !== 'boolean') throw new TicketRefused()
     if (claims.confidential) {

@@ -39,6 +39,12 @@ try {
     assert.equal(attempts.filter(result => result.rows[0].accepted).length, 1)
     const database = (await owner.query('SELECT current_database() AS name')).rows[0].name
     const quote = value => '"' + value.replaceAll('"', '""') + '"'
+    // Legacy fence grants alone must not let a listener start without its runtime grant.
+    const runtimeFence = 'docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text,boolean,bigint,uuid)'
+    await owner.query('REVOKE EXECUTE ON FUNCTION ' + runtimeFence + ' FROM ' + input.role)
+    try { await assert.rejects(assertDatabaseBoundary(pool), /collaboration database role refused/) }
+    finally { await owner.query('GRANT EXECUTE ON FUNCTION ' + runtimeFence + ' TO ' + input.role) }
+    await assertDatabaseBoundary(pool)
     const excess = [
       'SELECT ON pg_catalog.pg_authid',
       'SELECT (rolpassword) ON pg_catalog.pg_authid',

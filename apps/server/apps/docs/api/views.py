@@ -1,10 +1,15 @@
 """Core 0.43 native documents, backlink pages and scoped workspace search."""
 
+import hashlib
+import json
 from uuid import UUID
 
 from django.http import HttpRequest, HttpResponse
 
+from core.api.idempotency import scope_for
 from core.api.scopes import Operation, declares
+from core.idempotency import store
+from core.idempotency.fingerprint import body_sha256
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .. import services as service
@@ -133,14 +138,34 @@ def session(request: HttpRequest, organisation_id: UUID, document_id: UUID) -> H
             201,
         )
 
-    return http.serve(
-        request,
-        {"POST": post},
-        organisation_id,
-        authority=lambda verified: service.authorize_collab_session(
+    def authority(verified: VerifiedAccessToken) -> str | None:
+        context = service.authorize_collab_session(
             verified=verified, organisation_id=organisation_id, document_id=document_id
-        ),
-    )
+        )
+        if context is not None or verified.device_id is not None:
+            return context
+        # Old standalone receipts bound an absent device to the literal "None".
+        # Recognize only that exact scoped, unexpired receipt; new requests stay body-only.
+        scope = scope_for(
+            request,
+            issuer=verified.issuer,
+            subject=verified.subject,
+            key=request.headers.get("Idempotency-Key", ""),
+        )
+        if scope is not None:
+            receipt = store.lookup(scope)
+            legacy = hashlib.sha256(
+                json.dumps(["None", body_sha256(request.body)], separators=(",", ":")).encode()
+            ).hexdigest()
+            if (
+                receipt is not None
+                and not getattr(receipt, "expired", False)
+                and receipt.body_sha256 == legacy
+            ):
+                return "None"
+        return None
+
+    return http.serve(request, {"POST": post}, organisation_id, authority=authority)
 
 
 @declares(Operation("GET", "searchWorkspace", "workspace_search:read"))

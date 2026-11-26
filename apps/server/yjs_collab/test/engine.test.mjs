@@ -262,3 +262,16 @@ test('title keys and extracted wikilinks freeze Unicode normalization independen
     assert.deepEqual(updated.links, [arabicMax, todhri].sort())
   } finally { doc.destroy() }
 })
+
+
+test('signed confidential device bindings survive ticket verification and reject malformed bindings', () => {
+  const now = Math.floor(Date.now() / 1000), key = randomBytes(32)
+  const value = {...claims(now), confidential: true, epoch: 3, device: randomUUID()}
+  assert.equal(verify(ticket(value, key), key, now).device, value.device)
+  for (const patch of [{device: null}, {device: 'invalid'}, {confidential: false, epoch: null}]) {
+    assert.throws(() => verify(ticket({...value, ...patch}, key), key, now), TicketRefused)
+  }
+  const changed = {...value, device: randomUUID()}
+  const body = Buffer.from(JSON.stringify(changed)).toString('base64url')
+  assert.throws(() => verify(body + '.' + ticket(value, key).split('.')[1], key, now), TicketRefused)
+})

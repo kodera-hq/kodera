@@ -25,6 +25,9 @@ export const WORKSPACE_DOCS_DEMO_ROUTES: readonly string[] = [
   'GET /organisations/:organisation_id/workspace/documents/:document_id',
   'PATCH /organisations/:organisation_id/workspace/documents/:document_id',
   'DELETE /organisations/:organisation_id/workspace/documents/:document_id',
+  'GET /organisations/:organisation_id/workspace/documents/:document_id/role-grants',
+  'PUT /organisations/:organisation_id/workspace/documents/:document_id/role-grants/:role_id',
+  'DELETE /organisations/:organisation_id/workspace/documents/:document_id/role-grants/:role_id',
   'GET /organisations/:organisation_id/workspace/documents/:document_id/backlinks',
   'POST /organisations/:organisation_id/workspace/documents/:document_id/collab-session',
   'GET /organisations/:organisation_id/workspace/search',
@@ -142,6 +145,32 @@ export function workspaceDocumentsDemoHandlers(
           headers: { ...headers(), ETag: etagOf(found) },
         })
       }
+    ),
+
+    // Governance seeds no subteams and refuses role mutations; sharing follows that state.
+    http.get(
+      `${base}/organisations/:organisation_id/workspace/documents/:document_id/role-grants`,
+      ({ params }) => {
+        const doc = ensureOrgDocs(String(params['organisation_id'])).find(
+          (candidate) => candidate.id === String(params['document_id'])
+        )
+        if (!doc) return problem('https://kodera.io/problems/not-found')
+        if (doc.role !== 'editor') return problem('https://kodera.io/problems/forbidden')
+        return HttpResponse.json(
+          { revision: doc.version, data: [] },
+          {
+            headers: { ...headers(), ETag: etagOf(doc), 'Cache-Control': 'no-store' },
+          }
+        )
+      }
+    ),
+    http.put(
+      `${base}/organisations/:organisation_id/workspace/documents/:document_id/role-grants/:role_id`,
+      () => problem('https://kodera.io/problems/forbidden')
+    ),
+    http.delete(
+      `${base}/organisations/:organisation_id/workspace/documents/:document_id/role-grants/:role_id`,
+      () => problem('https://kodera.io/problems/forbidden')
     ),
 
     http.patch(

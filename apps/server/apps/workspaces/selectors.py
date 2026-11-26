@@ -21,7 +21,17 @@ from .models import (
     Workspace,
     WorkspaceMemberRestriction,
     WorkspaceQuota,
+    WorkspaceRole,
 )
+
+
+def subteam_role_id(*, workspace_id: UUID, role_id: UUID) -> UUID | None:
+    """Resolve a subteam in the exact workspace without exporting its model."""
+    return (
+        WorkspaceRole.objects.filter(pk=role_id, workspace_id=workspace_id, kind="subteam")
+        .values_list("id", flat=True)
+        .first()
+    )
 
 
 def active_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:

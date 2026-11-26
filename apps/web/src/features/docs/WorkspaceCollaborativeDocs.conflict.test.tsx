@@ -34,6 +34,7 @@ import { ApiProblem } from '@/api/client'
 import i18n from '@/i18n'
 import en from '@/i18n/en.json'
 import fr from '@/i18n/fr.json'
+import { getDocsDriveCopy } from './docsDriveMessages'
 import { WorkspaceCollaborativeDocs } from './WorkspaceCollaborativeDocs'
 import * as docsApi from './workspaceDocumentsApi'
 import type { CoreWorkspaceDocument } from './workspaceDocumentsApi'
@@ -436,6 +437,252 @@ it('leaves a failure that is not about a version to the standard save error', as
   expect(draftInEditor('fr').value).toBe(DRAFT_MARKDOWN)
 })
 
+it.each(['title', 'markdown'] as const)(
+  'preserves a failed %s draft while re-reading untouched fields and a viewer downgrade',
+  async (field) => {
+    const { server, read } = await openPage({ pages: [PAGE, OTHER_PAGE] })
+    const save = vi
+      .spyOn(
+        docsApi,
+        field === 'title' ? 'updateWorkspaceDocumentMetadata' : 'updateWorkspaceDocument'
+      )
+      .mockRejectedValue(new TypeError('Network unavailable'))
+    fireEvent.change(
+      field === 'title'
+        ? screen.getByTestId('docs-page-title-input')
+        : screen.getByRole('textbox', { name: 'Source Markdown' }),
+      { target: { value: field === 'title' ? 'Unsaved title' : '# Unsaved Markdown' } }
+    )
+    await screen.findByTestId('docs-tree-error')
+    expect(save).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByTestId('docs-saving-indicator')).toBeNull())
+    server.set(PAGE.id, {
+      document: {
+        ...PAGE,
+        title: 'Fresh title',
+        markdown: '# Fresh Markdown',
+        parentId: OTHER_PAGE.id,
+        role: 'viewer',
+      },
+      etag: '"v2"',
+    })
+    const reads = read.mock.calls.length
+    await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(reads))
+    await waitFor(() =>
+      expect(screen.getByTestId('docs-page-title-input')).toHaveAttribute('readonly')
+    )
+    expect(screen.getByTestId('docs-page-title-input')).toHaveValue(
+      field === 'title' ? 'Unsaved title' : 'Fresh title'
+    )
+    expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveValue(
+      field === 'markdown' ? '# Unsaved Markdown' : '# Fresh Markdown'
+    )
+    expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveAttribute('readonly')
+    expect(screen.getByTestId(`docs-tree-item-${PAGE.id}`)).toHaveAttribute('data-depth', '2')
+    expect(screen.queryByTestId('docs-parent-select')).toBeNull()
+    await waitFor(() =>
+      expect(screen.getByTestId('docs-collab-status-pill')).toHaveTextContent(
+        fr['console.docs.collab.status-readonly']
+      )
+    )
+  }
+)
+
+it.each(['success', 'failure'] as const)(
+  'preserves a pending move across a detail read and handles its %s',
+  async (outcome) => {
+    const { read } = await openPage({ pages: [PAGE, OTHER_PAGE] })
+    const move = deferredWrite()
+    const save = vi.spyOn(docsApi, 'updateWorkspaceDocumentMetadata').mockReturnValue(move.answer)
+    fireEvent.change(screen.getByTestId('docs-parent-select'), {
+      target: { value: OTHER_PAGE.id },
+    })
+    expect(save).toHaveBeenCalledWith('org-1', PAGE.id, '"v1"', { parentId: OTHER_PAGE.id })
+    expect(screen.getByTestId('docs-save-state')).toHaveTextContent(
+      getDocsDriveCopy('fr').saveStateSaving
+    )
+    const reads = read.mock.calls.length
+    await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(reads))
+    expect(screen.getByTestId('docs-parent-select')).toHaveValue(OTHER_PAGE.id)
+    expect(screen.getByTestId(`docs-tree-item-${PAGE.id}`)).toHaveAttribute('data-depth', '2')
+
+    await act(async () => {
+      if (outcome === 'success') move.settle({ document: PAGE, etag: '"v2"' })
+      else move.refuse(new TypeError('Network unavailable'))
+    })
+    // Success uses the server's canonical parent; failure retains the unsaved move on later reads.
+    expect(screen.getByTestId('docs-save-state')).toHaveTextContent(
+      getDocsDriveCopy('fr').saveStateSaved
+    )
+    expect(screen.getByTestId('docs-parent-select')).toHaveValue(
+      outcome === 'success' ? '' : OTHER_PAGE.id
+    )
+    await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+    expect(screen.getByTestId('docs-parent-select')).toHaveValue(
+      outcome === 'success' ? '' : OTHER_PAGE.id
+    )
+    expect(screen.getByTestId(`docs-tree-item-${PAGE.id}`)).toHaveAttribute(
+      'data-depth',
+      outcome === 'success' ? '1' : '2'
+    )
+  }
+)
+
+it.each([
+  { readStarted: 'before', role: 'editor' },
+  { readStarted: 'during', role: 'editor' },
+  { readStarted: 'before', role: 'viewer' },
+] as const)(
+  'preserves a confirmed move when the $role detail read started $readStarted the move resolves late',
+  async ({ readStarted, role }) => {
+    const { read } = await openPage({ pages: [PAGE, OTHER_PAGE] })
+    const detail = deferredWrite()
+    const move = deferredWrite()
+    read.mockReturnValueOnce(detail.answer)
+    const save = vi
+      .spyOn(docsApi, 'updateWorkspaceDocumentMetadata')
+      .mockReturnValueOnce(move.answer)
+      .mockResolvedValue({ document: { ...PAGE, parentId: OTHER_PAGE.id }, etag: '"v3"' })
+    const startRead = async () => {
+      const reads = read.mock.calls.length
+      await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+      expect(read).toHaveBeenCalledTimes(reads + 1)
+    }
+    if (readStarted === 'before') await startRead()
+    fireEvent.change(screen.getByTestId('docs-parent-select'), {
+      target: { value: OTHER_PAGE.id },
+    })
+    if (readStarted === 'during') await startRead()
+    await act(async () =>
+      move.settle({ document: { ...PAGE, parentId: OTHER_PAGE.id }, etag: '"v2"' })
+    )
+    await act(async () =>
+      detail.settle({
+        document: { ...PAGE, title: 'Stale title', markdown: '# Stale body', role },
+        etag: '"v1"',
+      })
+    )
+    expect(screen.getByTestId(`docs-tree-item-${PAGE.id}`)).toHaveAttribute('data-depth', '2')
+    expect(screen.getByTestId('docs-page-title-input')).toHaveValue(PAGE.title)
+    expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveValue(PAGE.markdown)
+    if (role === 'viewer') {
+      expect(screen.getByTestId('docs-page-title-input')).toHaveAttribute('readonly')
+      expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveAttribute('readonly')
+      expect(screen.queryByTestId('docs-parent-select')).toBeNull()
+    } else {
+      expect(screen.getByTestId('docs-parent-select')).toHaveValue(OTHER_PAGE.id)
+      fireEvent.change(screen.getByTestId('docs-page-title-input'), {
+        target: { value: 'Renamed after move' },
+      })
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+      expect(save).toHaveBeenLastCalledWith('org-1', PAGE.id, '"v2"', {
+        title: 'Renamed after move',
+      })
+    }
+  }
+)
+
+it('saves a failed parent move together with a subsequent rename before showing Saved', async () => {
+  const { read, server } = await openPage({ pages: [PAGE, OTHER_PAGE] })
+  const save = vi
+    .spyOn(docsApi, 'updateWorkspaceDocumentMetadata')
+    .mockRejectedValueOnce(new TypeError('Network unavailable'))
+    .mockImplementation(async (_org, documentId, _etag, patch) => {
+      const saved = { document: { ...PAGE, ...patch }, etag: '"v2"' }
+      server.set(documentId, saved)
+      return saved
+    })
+  fireEvent.change(screen.getByTestId('docs-parent-select'), {
+    target: { value: OTHER_PAGE.id },
+  })
+  await screen.findByTestId('docs-tree-error')
+  fireEvent.change(screen.getByTestId('docs-page-title-input'), {
+    target: { value: 'Renamed after failure' },
+  })
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+  expect(save).toHaveBeenLastCalledWith('org-1', PAGE.id, '"v1"', {
+    title: 'Renamed after failure',
+    parentId: OTHER_PAGE.id,
+  })
+  await waitFor(() =>
+    expect(screen.getByTestId('docs-save-state')).toHaveTextContent(
+      getDocsDriveCopy('fr').saveStateSaved
+    )
+  )
+  expect(screen.queryByTestId('docs-tree-error')).toBeNull()
+  const reads = read.mock.calls.length
+  await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+  expect(read).toHaveBeenCalledTimes(reads + 1)
+  expect(screen.getByTestId('docs-parent-select')).toHaveValue(OTHER_PAGE.id)
+  expect(screen.getByTestId(`docs-tree-item-${PAGE.id}`)).toHaveAttribute('data-depth', '2')
+})
+
+it.each(['before', 'after'] as const)(
+  'ignores a detail read started during a retried move that resolves %s the PATCH',
+  async (readResolves) => {
+    const { read } = await openPage({ pages: [PAGE, OTHER_PAGE] })
+    const retry = deferredWrite()
+    const detail = deferredWrite()
+    const save = vi
+      .spyOn(docsApi, 'updateWorkspaceDocumentMetadata')
+      .mockRejectedValueOnce(new TypeError('Network unavailable'))
+      .mockReturnValueOnce(retry.answer)
+      .mockResolvedValue({ document: PAGE, etag: '"v3"' })
+    fireEvent.change(screen.getByTestId('docs-parent-select'), {
+      target: { value: OTHER_PAGE.id },
+    })
+    await screen.findByTestId('docs-tree-error')
+    fireEvent.change(screen.getByTestId('docs-page-title-input'), {
+      target: { value: 'Renamed after failure' },
+    })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    read.mockReturnValueOnce(detail.answer)
+    await act(async () => fireEvent.click(screen.getByTestId(`docs-tree-item-${PAGE.id}`)))
+    const settleDetail = () =>
+      act(async () =>
+        detail.settle({ document: { ...PAGE, markdown: '# Stale body' }, etag: '"v1"' })
+      )
+    if (readResolves === 'before') await settleDetail()
+    await act(async () =>
+      retry.settle({
+        document: { ...PAGE, parentId: OTHER_PAGE.id, title: 'Renamed after failure' },
+        etag: '"v2"',
+      })
+    )
+    if (readResolves === 'after') await settleDetail()
+    expect(screen.getByTestId('docs-parent-select')).toHaveValue(OTHER_PAGE.id)
+    expect(screen.getByTestId('docs-page-title-input')).toHaveValue('Renamed after failure')
+    expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveValue(PAGE.markdown)
+    fireEvent.change(screen.getByTestId('docs-page-title-input'), {
+      target: { value: 'Next title' },
+    })
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+    expect(save).toHaveBeenLastCalledWith('org-1', PAGE.id, '"v2"', { title: 'Next title' })
+  }
+)
+
+it('dispatches a queued rename without the failed parent after a newer move succeeds', async () => {
+  await openPage({ pages: [PAGE, OTHER_PAGE] })
+  const save = vi
+    .spyOn(docsApi, 'updateWorkspaceDocumentMetadata')
+    .mockRejectedValueOnce(new TypeError('Network unavailable'))
+    .mockResolvedValue({ document: PAGE, etag: '"v2"' })
+  fireEvent.change(screen.getByTestId('docs-parent-select'), {
+    target: { value: OTHER_PAGE.id },
+  })
+  await screen.findByTestId('docs-tree-error')
+  fireEvent.change(screen.getByTestId('docs-page-title-input'), {
+    target: { value: 'Queued rename' },
+  })
+  await act(async () =>
+    fireEvent.change(screen.getByTestId('docs-parent-select'), { target: { value: '' } })
+  )
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+  expect(save).toHaveBeenLastCalledWith('org-1', PAGE.id, '"v2"', { title: 'Queued rename' })
+})
+
 it('restores the refused draft and its banner when the page is left and opened again', async () => {
   const { user, server, body, read } = await openPage({ pages: [PAGE, OTHER_PAGE] })
   vi.spyOn(docsApi, 'updateWorkspaceDocument').mockRejectedValue(problem(412))
@@ -792,6 +1039,7 @@ it.each([
     await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
     expect(write).toHaveBeenLastCalledWith('org-1', PAGE.id, '"v1"', {
       markdown: `${DRAFT_MARKDOWN} Next.`,
+      ...(field === 'parent' ? { parentId: OTHER_PAGE.id } : {}),
     })
     await act(async () => {
       newer.settle({ document: PAGE, etag: '"v3"' })

@@ -374,6 +374,7 @@ config/settings/deploy_worker.py
 !apps/docs/engine.py
 !apps/docs/errors.py
 !apps/docs/models.py
+!apps/docs/role_grants.py
 !apps/docs/services.py
 !apps/docs/templates.py
 !apps/docs/tickets.py
@@ -381,6 +382,7 @@ config/settings/deploy_worker.py
 !apps/docs/tree.py
 !apps/docs/api/__init__.py
 !apps/docs/api/http.py
+!apps/docs/api/role_grants.py
 !apps/docs/api/responses.py
 !apps/docs/api/urls.py
 !apps/docs/api/views.py

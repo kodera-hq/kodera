@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import collections, views
+from . import collections, role_grants, views
 
 ROOT = "api/v1/organisations/<uuid:organisation_id>/workspace/"
 urlpatterns = [
@@ -12,6 +12,8 @@ urlpatterns = [
     path(ROOT + "collections/<uuid:collection_id>/rows/<uuid:document_id>", collections.row),
     path(ROOT + "documents", views.documents),
     path(ROOT + "documents/<uuid:document_id>", views.document),
+    path(ROOT + "documents/<uuid:document_id>/role-grants", role_grants.grants),
+    path(ROOT + "documents/<uuid:document_id>/role-grants/<uuid:role_id>", role_grants.grant),
     path(ROOT + "documents/<uuid:document_id>/backlinks", views.backlinks),
     path(ROOT + "documents/<uuid:document_id>/collab-session", views.session),
     path(ROOT + "search", views.search),

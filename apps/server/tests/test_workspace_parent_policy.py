@@ -1006,11 +1006,11 @@ def without_warm_pool(objects):
     )
     from workspace_safety.schema_inventory import without_moderation
 
-    objects = without_moderation(
-        without_documents(
-            without_quotas(without_iam(without_confidential(without_governance(objects))))
-        )
-    )
+    # Quotas own triggers on document tables; document grants own a trigger on
+    # the IAM role table. Validate and remove each before its referenced tables.
+    objects = without_quotas(objects)
+    objects = without_documents(objects)
+    objects = without_moderation(without_iam(without_confidential(without_governance(objects))))
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
     template_app_shared = {

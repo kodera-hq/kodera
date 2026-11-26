@@ -433,3 +433,16 @@ def test_oversized_valid_jwks_refuses(signer):
 def test_oversized_matching_key_id_refuses(signer):
     with pytest.raises(TokenVerificationError):
         snapshot([dict(signer[2], kid="x" * 129)])
+
+
+def test_signed_device_binding_is_carried_without_inventing_device_authority(signer):
+    from uuid import UUID
+
+    device = "01950000-0000-7000-8000-000000000001"
+    result = verify_access_token(
+        sign(signer, claims(kodera_device_id=device)), admitted=snapshot([signer[2]])
+    )
+    assert result.device_id == UUID(device)
+    assert verify_access_token(sign(signer), admitted=snapshot([signer[2]])).device_id is None
+    for invalid in ("invalid", {}, 42):
+        refused(sign(signer, claims(kodera_device_id=invalid)), snapshot([signer[2]]))

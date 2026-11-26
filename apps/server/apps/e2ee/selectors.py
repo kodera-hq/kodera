@@ -7,7 +7,7 @@ from uuid import UUID
 
 from django.db.models import Exists, OuterRef
 
-from .models import Participant, Room
+from .models import Device, Participant, Room
 
 SFRAME_V1_MEDIA_POLICY = "sframe-v1"
 
@@ -47,6 +47,19 @@ def confidential_audio_room_policy(
     if e2ee_room_id is not None:
         payload["e2ee_room_id"] = str(e2ee_room_id)
     return payload
+
+
+def has_active_owned_device(
+    *, device_id: UUID, organisation_id: UUID, membership_id: UUID, identity_id: UUID
+) -> bool:
+    """Check the exact active device binding without exporting a device model."""
+    return Device.objects.filter(
+        pk=device_id,
+        organisation_id=organisation_id,
+        membership_id=membership_id,
+        identity_id=identity_id,
+        revoked_at__isnull=True,
+    ).exists()
 
 
 def confidential_room_grant_ready(*, channel_id: UUID, organisation_id: UUID | None = None) -> bool:

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -183,6 +184,8 @@ class VerifiedAccessToken:
     authorized_party: str | None = None
     mfa_enrolled: bool | None = None
     email: str | None = None
+    # Optional issuer-signed device binding; room-bound confidential docs fail closed without it.
+    device_id: UUID | None = None
 
 
 class RegisteredFactorReason(StrEnum):
@@ -446,6 +449,10 @@ def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> Verifie
         # consumer that reads it, on the database clock, which answers `403 mfa-required`.
         if not isinstance(auth_time, int | float | str | bool):
             auth_time = None
+        device_id = payload.get("kodera_device_id")
+        if device_id is not None:
+            _require(isinstance(device_id, str))
+            device_id = UUID(device_id)
         return VerifiedAccessToken(
             admitted.issuer,
             subject,
@@ -456,6 +463,7 @@ def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> Verifie
             tuple(amr) if amr is not None else None,
             acr,
             auth_time,
+            device_id=device_id,
             email_verified=_verified_contact(payload),
             email=_optional_string(payload, "email"),
             authorized_party=_optional_string(payload, "azp"),

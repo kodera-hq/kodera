@@ -237,6 +237,49 @@ describe('failures', () => {
     expect(failure.currentEtag).toBe(AN_ETAG)
   })
 
+  it.each(['put', 'delete'] as const)(
+    'keeps grant %s problem ETag equal to its response header',
+    async (method) => {
+      const current = '"current-grants"'
+      server.use(
+        http[method](
+          `*/api/v1/organisations/:org/workspace/documents/:doc/role-grants/:role`,
+          () =>
+            new Response(
+              JSON.stringify({
+                type: 'https://kodera.io/problems/precondition-failed',
+                title: 'Workspace request refused',
+                status: 412,
+                current_etag: current,
+              }),
+              {
+                status: 412,
+                headers: { 'Content-Type': 'application/problem+json', ETag: current },
+              }
+            )
+        )
+      )
+      const path =
+        '/organisations/{organisation_id}/workspace/documents/{document_id}/role-grants/{role_id}'
+      const params = {
+        path: {
+          organisation_id: crypto.randomUUID(),
+          document_id: crypto.randomUUID(),
+          role_id: crypto.randomUUID(),
+        },
+        header: { 'If-Match': '"stale"' },
+      }
+      const request =
+        method === 'put'
+          ? coreApi().PUT(path, { params, body: { role: 'viewer' } })
+          : coreApi().DELETE(path, { params })
+      const failure = (await request.catch((error: unknown) => error)) as ApiProblem
+      expect(failure).toBeInstanceOf(ApiProblem)
+      expect(failure.status).toBe(412)
+      expect(failure.currentEtag).toBe(current)
+    }
+  )
+
   it('carries the free names Core offers on slug-taken, and none on any other problem', async () => {
     server.use(
       http.post(`*/api/v1/organisations/:id/tenants`, () =>

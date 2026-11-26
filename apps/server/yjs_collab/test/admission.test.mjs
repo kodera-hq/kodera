@@ -65,7 +65,7 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
     assert.throws(() => confidentialFrame(bad, 'editor', 3), ConfidentialRefused)
   }
 
-  // Confidential Store.admit and Store.update pass (confidential, epoch) to 9-arg docs_collab_fence and never invoke Yjs transform worker.
+  // Confidential Store.admit and Store.update pass (confidential, epoch) to 10-arg docs_collab_fence and never invoke Yjs transform worker.
   const queries = []
   const storedUpdates = []
   const client = {
@@ -102,6 +102,7 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
     subject: 'alice',
     role: 'editor',
     confidential: true,
+    device: randomUUID(),
     epoch: 3,
     expires: Math.floor(Date.now() / 1000) + 60,
     nonce: randomUUID(),
@@ -111,7 +112,7 @@ test('confidential tickets and KDE1 protocol parser enforce strict magic, canoni
   assert.equal(queries.some(q => q.sql.includes('markdown=$2')), false)
   assert.equal(queries.some(q => q.sql.includes('docs_documentlink')), false)
   const fenceCall = queries.find(q => q.sql.includes('docs_collab_fence'))
-  assert.deepEqual(fenceCall.params.slice(7), [true, 3])
+  assert.deepEqual(fenceCall.params.slice(7), [true, 3, claims.device])
 
   let delivered = null
   await store.admit({ ...claims, nonce: randomUUID() }, payload => { delivered = payload })

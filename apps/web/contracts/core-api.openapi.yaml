@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.61.0
+  version: 0.62.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -7811,6 +7811,191 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/documents/{document_id}/role-grants:
+    get:
+      operationId: listDocumentRoleGrants
+      summary: List document subteam grants
+      description: 'Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Lists direct grants only; ancestor grants still apply through the existing document role traversal. At each node the highest member or assigned subteam grant wins (editor over viewer); channel policy and ancestor restrictions remain effective. Confidential grant access requires a valid encryption epoch and an issuer-signed kodera_device_id claim for an active device owned by the caller. Confidential room access additionally requires an issuer-signed kodera_device_id claim identifying an active, unrevoked participating device; organisation administrators cannot bypass this boundary.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Current direct subteam grant set. Use this response ETag as If-Match for either mutation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              description: Grant responses must never be cached.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentRoleGrantList'
+              example:
+                revision: 2
+                data:
+                - workspaceRoleId: 00000000-0000-7000-8000-000000000002
+                  name: Engineering
+                  slug: engineering
+                  role: editor
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/documents/{document_id}/role-grants/{role_id}:
+    put:
+      operationId: putDocumentRoleGrant
+      summary: Upsert a document subteam grant
+      description: 'Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Workspace-serialized and audited. Requires the exact current grant-list ETag in If-Match (wildcards are refused). Changes increment the document revision and notify live collaboration sessions. Repeating an unchanged grant preserves the revision, ETag and audit history. Does not change document visibility or confidential channel membership.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/DocumentSubteamRoleId'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Current direct subteam grant set. Use this response ETag as If-Match for either mutation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              description: Grant responses must never be cached.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentRoleGrantList'
+              example:
+                revision: 2
+                data:
+                - workspaceRoleId: 00000000-0000-7000-8000-000000000002
+                  name: Engineering
+                  slug: engineering
+                  role: editor
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentRoleGrantRequest'
+    delete:
+      operationId: revokeDocumentRoleGrant
+      summary: Revoke a document subteam grant
+      description: 'Active organisation membership and current document editor authority are required, including channel and ancestor restrictions. Responses are Cache-Control: no-store. Only roles of kind subteam in this workspace may be granted access. Available subteams can be read with listWorkspaceRoles by any active workspace member. Workspace-serialized and audited. Requires the exact current grant-list ETag in If-Match (wildcards are refused). Changes increment the document revision, notify live collaboration sessions and return the remaining direct grants. Revoking an absent grant preserves the revision, ETag and audit history. Other grants and ancestor restrictions still apply.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/DocumentSubteamRoleId'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Current direct subteam grant set. Use this response ETag as If-Match for either mutation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              description: Grant responses must never be cached.
+              schema:
+                type: string
+                const: no-store
+              example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentRoleGrantList'
+              example:
+                revision: 2
+                data:
+                - workspaceRoleId: 00000000-0000-7000-8000-000000000002
+                  name: Engineering
+                  slug: engineering
+                  role: editor
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
   /organisations/{organisation_id}/workspace/documents/{document_id}/backlinks:
     get:
       operationId: listDocumentBacklinks
@@ -14645,13 +14830,21 @@ components:
         maxLength: 255
         pattern: '^[!-~]{16,255}(?![\s\S])'
         examples: ['00000000-0000-4000-8000-000000000001']
+    DocumentSubteamRoleId:
+      name: role_id
+      in: path
+      required: true
+      description: Workspace subteam role identifier.
+      schema:
+        type: string
+        format: uuid
     IfMatch:
       name: If-Match
       in: header
       required: true
       description: |
         The `ETag` of the representation this change was computed against. Required on every
-        `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+        conditional mutation (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
         Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
         re-applies rather than overwriting a change it never saw.
 
@@ -17026,6 +17219,73 @@ components:
           '
         role: editor
         updatedAt: '2026-01-01T12:00:00Z'
+    DocumentRoleGrant:
+      type: object
+      additionalProperties: false
+      required:
+      - workspaceRoleId
+      - name
+      - slug
+      - role
+      properties:
+        workspaceRoleId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9_-]{0,63}$
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+      examples:
+      - workspaceRoleId: 00000000-0000-7000-8000-000000000002
+        name: Engineering
+        slug: engineering
+        role: editor
+    DocumentRoleGrantRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - role
+      properties:
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+      examples:
+      - role: editor
+    DocumentRoleGrantList:
+      type: object
+      additionalProperties: false
+      required:
+      - revision
+      - data
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Informational document revision. Grant mutations increment this value without changing the document content ETag or updatedAt. The grant-list ETag depends only on the document ID and ordered direct grant state, independently of title, markdown, revision and updatedAt.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentRoleGrant'
+      examples:
+      - revision: 2
+        data:
+        - workspaceRoleId: 00000000-0000-7000-8000-000000000002
+          name: Engineering
+          slug: engineering
+          role: editor
     DocumentBacklink:
       type: object
       title: DocumentBacklink

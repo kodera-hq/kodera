@@ -159,9 +159,12 @@ def resolve_confidential_collab_epoch(
     identity_id: UUID,
     channel_id: UUID | None,
     document_epoch: int | None,
+    device_id: UUID | None = None,
 ) -> int | None:
     """Resolve the authoritative u32 encryption epoch for a confidential document collaboration session."""
     if channel_id is not None:
+        if device_id is None:
+            return None
         room = Room.objects.filter(organisation_id=organisation_id, channel_id=channel_id).first()
         if room is None or room.rekey_required:
             return None
@@ -171,6 +174,7 @@ def resolve_confidential_collab_epoch(
         participating = Participant.objects.filter(
             room=room,
             organisation_id=organisation_id,
+            device_id=device_id,
             left_epoch__isnull=True,
             joined_epoch__lte=room.epoch,
             device__organisation_id=organisation_id,

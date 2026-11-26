@@ -65,6 +65,7 @@ import {
   type WorkspaceDriveFileItem,
 } from './DocsDriveExplorer'
 import { getDocsDriveCopy } from './docsDriveMessages'
+import { DocumentSubteamShare } from './DocumentSubteamShare'
 import {
   ALL_STARTER_TEMPLATE_KEYS,
   buildDocumentTree,
@@ -524,6 +525,8 @@ export function WorkspaceCollaborativeDocs({
   } | null>(null)
   const [controllerBridge] = useState(() => new CollabControllerBridge())
 
+  // Failed writes still own their drafts after the pending request markers clear.
+  const dirtyPatchesRef = useRef<Map<string, RemotePatch>>(new Map())
   const etagsRef = useRef<Map<string, string>>(new Map())
   // Debounced writes, one per page: editing page B inside the debounce window must not cancel the
   // write page A still owes the server.
@@ -739,6 +742,8 @@ export function WorkspaceCollaborativeDocs({
     [currentDoc, visibleCurrentMarkdown]
   )
 
+  const writeGenerationOf = (docId: string): number => writeGenerationsRef.current.get(docId) ?? 0
+
   // Fetch ETag + fresh document + backlinks when switching documents in Core 0.43.0 mode.
   useEffect(() => {
     if (
@@ -750,17 +755,31 @@ export function WorkspaceCollaborativeDocs({
       return
     const activeDocId = detailDocumentId
     const abort = new AbortController()
+    const readWriteGeneration = writeGenerationOf(detailDocumentId)
+    const hadInFlightWriteAtReadStart = [...inFlightSavesRef.current.values()].includes(detailDocumentId)
 
     void getWorkspaceDocument(organisationId, activeDocId, abort.signal)
       .then(({ document: fresh, etag }) => {
         if (abort.signal.aborted) return
         setUnavailableDocumentId(null)
+        if (hadInFlightWriteAtReadStart || writeGenerationOf(activeDocId) !== readWriteGeneration) {
+          if (fresh.role === 'viewer')
+            setInternalDocs((prev) =>
+              prev.map((d) => (d.id === activeDocId ? { ...d, role: 'viewer' } : d))
+            )
+          return
+        }
         const refused = conflictsRef.current.get(activeDocId)
         const hasLocalWrite =
           saveTimersRef.current.has(activeDocId) ||
           [...inFlightSavesRef.current.values()].includes(activeDocId)
-        if (hasLocalWrite) return
-        if (!refused && driveDocumentKind(fresh.markdown) === 'base') {
+        const dirty = dirtyPatchesRef.current.get(activeDocId)
+        if (
+          !hasLocalWrite &&
+          !refused &&
+          dirty?.markdown === undefined &&
+          driveDocumentKind(fresh.markdown) === 'base'
+        ) {
           const rows = readDriveCollectionRows(fresh.markdown)
           setCollectionRows((prev) => ({ ...prev, [activeDocId]: rows }))
           const previousBody = docsRef.current.find((doc) => doc.id === activeDocId)?.markdown ?? ''
@@ -774,15 +793,24 @@ export function WorkspaceCollaborativeDocs({
               )
             )
         }
-        if (etag && !refused) etagsRef.current.set(activeDocId, etag)
+        if (etag && !refused && !hasLocalWrite && (!dirty || !etagsRef.current.has(activeDocId)))
+          etagsRef.current.set(activeDocId, etag)
         setInternalDocs((prev) =>
           (prev.some((doc) => doc.id === activeDocId) ? prev : [...prev, fresh]).map((d) =>
             d.id === activeDocId
               ? {
                   ...d,
-                  parentId: fresh.parentId,
-                  title: refused ? refused.title : fresh.title,
-                  markdown: refused ? refused.markdown : fresh.markdown,
+                  parentId: dirty?.parentId !== undefined ? d.parentId : fresh.parentId,
+                  title: refused
+                    ? refused.title
+                    : dirty?.title !== undefined
+                      ? d.title
+                      : fresh.title,
+                  markdown: refused
+                    ? refused.markdown
+                    : dirty?.markdown !== undefined
+                      ? d.markdown
+                      : fresh.markdown,
                   role: fresh.role,
                   updatedAt: fresh.updatedAt,
                 }
@@ -811,6 +839,11 @@ export function WorkspaceCollaborativeDocs({
     }
   }, [detailDocumentId, detailRequestEpoch, isRemoteMode, organisationId])
 
+  const [shareClassification, setShareClassification] = useState<{
+    controller: CollabSessionController
+    plaintext: boolean
+  } | null>(null)
+
   // Start & tear down Yjs CollabSessionController for the active document.
   useEffect(() => {
     if (!activeDocId || !activeDocRole) return
@@ -818,6 +851,7 @@ export function WorkspaceCollaborativeDocs({
     const initialBoundary = sessionBoundaryRef.current
     const source = docsRef.current.find((doc) => doc.id === activeDocId)
     const sourceStore = driveContext?.store
+    let retired = false
     const ctrl = new CollabSessionController({
       scopeKey,
       ...(confidential ? { confidential } : {}),
@@ -830,7 +864,15 @@ export function WorkspaceCollaborativeDocs({
       },
       ...(isRemoteMode && organisationId && !activeDocId.startsWith('channel:')
         ? {
-            fetchSession: () => createWorkspaceDocumentCollabSession(organisationId, activeDocId),
+            fetchSession: async () => {
+              const grant = await createWorkspaceDocumentCollabSession(organisationId, activeDocId)
+              if (!retired)
+                setShareClassification({
+                  controller: ctrl,
+                  plaintext: grant.confidential === false,
+                })
+              return grant
+            },
           }
         : {}),
       ...(webSocketFactory ? { webSocketFactory } : {}),
@@ -845,6 +887,7 @@ export function WorkspaceCollaborativeDocs({
       void ctrl.connect()
     }
     return () => {
+      retired = true
       const boundary = source?.sourceRoomId
         ? sourceStore?.getRoomBoundary?.(source.sourceRoomId)
         : undefined
@@ -914,6 +957,19 @@ export function WorkspaceCollaborativeDocs({
       }
     }
   }, [])
+
+  const shareBlocked =
+    plaintextBlocked ||
+    Boolean(confidential?.required) ||
+    collabSnapshot.status === 'forbidden' ||
+    (isRemoteMode &&
+      Boolean(
+        activeDocId &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(activeDocId)
+      ) &&
+      (!sessionController ||
+        shareClassification?.controller !== sessionController ||
+        !shareClassification.plaintext))
 
   const effectiveRole: DocumentAccessRole =
     plaintextBlocked ||
@@ -1393,8 +1449,6 @@ export function WorkspaceCollaborativeDocs({
     commitConflicts(withoutEntry(conflictsRef.current, docId))
   }
 
-  const writeGenerationOf = (docId: string): number => writeGenerationsRef.current.get(docId) ?? 0
-
   const supersedeWrites = (docId: string): number => {
     const next = writeGenerationOf(docId) + 1
     writeGenerationsRef.current = withNewestEntry(
@@ -1443,7 +1497,11 @@ export function WorkspaceCollaborativeDocs({
     // title typed just before a body edit is not lost to it.
     const pending = saveTimersRef.current.get(docId)
     if (pending !== undefined) clearTimeout(pending.timer)
-    const patch: RemotePatch = { ...pending?.patch, ...nextPatch }
+    const patch: RemotePatch = {
+      ...pending?.patch,
+      ...nextPatch,
+    }
+    dirtyPatchesRef.current.set(docId, { ...dirtyPatchesRef.current.get(docId), ...patch })
     setIsSavingRemote(true)
     const run = () => {
       if (saveTimersRef.current.get(docId)?.run === run) saveTimersRef.current.delete(docId)
@@ -1458,6 +1516,9 @@ export function WorkspaceCollaborativeDocs({
         return
       }
       const etag = etagsRef.current.get(docId)
+      const dirtyParentId = dirtyPatchesRef.current.get(docId)?.parentId
+      if (dirtyParentId !== undefined) patch.parentId = dirtyParentId
+      else delete patch.parentId
       if (!etag) {
         settleSavingIndicator()
         noteWriteRefusal(docId, 'version-required')
@@ -1483,6 +1544,15 @@ export function WorkspaceCollaborativeDocs({
         .then(({ etag: nextEtag }) => {
           if (writeGenerationOf(docId) !== generation) return
           if (nextEtag) etagsRef.current.set(docId, nextEtag)
+          const dirty = dirtyPatchesRef.current.get(docId)
+          if (dirty) {
+            const remaining = { ...dirty }
+            for (const field of ['title', 'markdown', 'parentId'] as const) {
+              if (remaining[field] === patch[field]) delete remaining[field]
+            }
+            if (Object.keys(remaining).length) dirtyPatchesRef.current.set(docId, remaining)
+            else dirtyPatchesRef.current.delete(docId)
+          }
           forgetConflict(docId)
         })
         .catch((error: unknown) => {
@@ -1490,6 +1560,7 @@ export function WorkspaceCollaborativeDocs({
           reportWriteFailure(docId, error)
         })
         .finally(() => {
+          if (writeGenerationOf(docId) === generation) supersedeWrites(docId)
           inFlightSavesRef.current.delete(saveToken)
           settleSavingIndicator()
         })
@@ -1519,6 +1590,7 @@ export function WorkspaceCollaborativeDocs({
         return
       }
       etagsRef.current.set(docId, etag)
+      dirtyPatchesRef.current.delete(docId)
       commitDocs((prev) =>
         prev.map((d) =>
           d.id === docId
@@ -1586,6 +1658,7 @@ export function WorkspaceCollaborativeDocs({
         currentDraft.title === savedDraft.title &&
         currentDraft.markdown === savedDraft.markdown
       ) {
+        dirtyPatchesRef.current.delete(docId)
         forgetConflict(docId)
       }
       selectDocument(created.id)
@@ -1651,14 +1724,21 @@ export function WorkspaceCollaborativeDocs({
     commitDocs(() => mutated.docs)
 
     if (isRemoteMode && organisationId) {
+      const generation = supersedeWrites(currentDoc.id)
+      dirtyPatchesRef.current.set(currentDoc.id, {
+        ...dirtyPatchesRef.current.get(currentDoc.id),
+        parentId: nextParentId,
+      })
       const etag = etagsRef.current.get(currentDoc.id)
       if (!etag) {
         noteWriteRefusal(currentDoc.id, 'version-required')
         return
       }
-      const generation = supersedeWrites(currentDoc.id)
+      const saveToken = Symbol(currentDoc.id)
+      inFlightSavesRef.current.set(saveToken, currentDoc.id)
+      setIsSavingRemote(true)
       try {
-        const { etag: nextEtag } = await updateWorkspaceDocumentMetadata(
+        const { document: saved, etag: nextEtag } = await updateWorkspaceDocumentMetadata(
           organisationId,
           currentDoc.id,
           etag,
@@ -1666,10 +1746,23 @@ export function WorkspaceCollaborativeDocs({
         )
         if (writeGenerationOf(currentDoc.id) !== generation) return
         if (nextEtag) etagsRef.current.set(currentDoc.id, nextEtag)
+        const remaining = { ...dirtyPatchesRef.current.get(currentDoc.id) }
+        delete remaining.parentId
+        if (Object.keys(remaining).length) dirtyPatchesRef.current.set(currentDoc.id, remaining)
+        else dirtyPatchesRef.current.delete(currentDoc.id)
+        const scheduled = saveTimersRef.current.get(currentDoc.id)
+        if (scheduled) delete scheduled.patch.parentId
+        commitDocs((prev) =>
+          prev.map((d) => (d.id === currentDoc.id ? { ...d, parentId: saved.parentId } : d))
+        )
         forgetConflict(currentDoc.id)
       } catch (error) {
         if (writeGenerationOf(currentDoc.id) !== generation) return
         reportWriteFailure(currentDoc.id, error)
+      } finally {
+        if (writeGenerationOf(currentDoc.id) === generation) supersedeWrites(currentDoc.id)
+        inFlightSavesRef.current.delete(saveToken)
+        settleSavingIndicator()
       }
     }
   }
@@ -2459,20 +2552,30 @@ export function WorkspaceCollaborativeDocs({
           title={driveCopy.share}
           closeLabel={driveCopy.close}
         >
-          <div className="flex flex-col gap-4 text-sm text-c-ink-2">
+          <div className="flex max-h-[calc(75vh)] flex-col gap-4 overflow-y-auto text-sm text-c-ink-2">
             <p>{currentDoc?.title ?? driveCopy.driveRoot}</p>
             <p>{effectiveRole === 'viewer' ? driveCopy.roleViewer : driveCopy.roleEditor}</p>
             <p>{driveCopy.inheritance}</p>
             <p>{driveCopy.shareAccess}</p>
-            {plaintextBlocked ? (
+            {shareBlocked ? (
               <p role="alert" className="text-c-warn-ink">
                 {driveCopy.shareRefused}
               </p>
             ) : null}
+            {shareOpen && unavailableDocumentId !== activeDocId ? (
+              <DocumentSubteamShare
+                key={currentUser.id}
+                organisationId={organisationId}
+                documentId={activeDocId}
+                remote={isRemoteMode}
+                plaintextBlocked={shareBlocked}
+                canManageSharing={activeDocRole !== 'viewer' && effectiveRole !== 'viewer'}
+              />
+            ) : null}
             <Button
-              disabled={plaintextBlocked || !currentDoc}
+              disabled={shareBlocked || !currentDoc}
               onClick={() => {
-                if (plaintextBlocked || !currentDoc) return
+                if (shareBlocked || !currentDoc) return
                 const link = new URL(window.location.href)
                 link.searchParams.set('document', currentDoc.id)
                 if (!navigator.clipboard) {

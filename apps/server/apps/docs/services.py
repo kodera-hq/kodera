@@ -69,7 +69,7 @@ def write_context(
 def role(principal: TenantCaller, verified: VerifiedAccessToken, document_id: UUID) -> str | None:
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT docs_document_role(%s,%s,%s,%s,%s,%s)",
+            "SELECT docs_document_role(%s,%s,%s,%s,%s,%s,%s)",
             [
                 document_id,
                 principal.organisation_id,
@@ -77,6 +77,7 @@ def role(principal: TenantCaller, verified: VerifiedAccessToken, document_id: UU
                 principal.identity_id,
                 verified.issuer,
                 verified.subject,
+                verified.device_id,
             ],
         )
         value = cursor.fetchone()[0]
@@ -262,7 +263,8 @@ def authorize_document(
 @transaction.atomic
 def authorize_collab_session(
     *, verified: VerifiedAccessToken, organisation_id: UUID, document_id: UUID
-) -> None:
+) -> str | None:
+    """Authorize current access and return a device replay context only for confidential docs."""
     workspace_id, principal = read_context(verified, organisation_id)
     row, _ = resource(
         workspace_id=workspace_id,
@@ -277,9 +279,12 @@ def authorize_collab_session(
             identity_id=principal.identity_id,
             channel_id=row.channel_id,
             document_epoch=row.encryption_epoch,
+            device_id=verified.device_id,
         )
         if epoch is None or not 0 <= epoch <= MAX_COLLAB_EPOCH:
             raise RefusalError(403)
+        return str(verified.device_id) if verified.device_id is not None else None
+    return None
 
 
 @transaction.atomic
@@ -528,6 +533,7 @@ def collab_session(
             identity_id=principal.identity_id,
             channel_id=row.channel_id,
             document_epoch=row.encryption_epoch,
+            device_id=verified.device_id,
         )
         if epoch is None or not 0 <= epoch <= MAX_COLLAB_EPOCH:
             raise RefusalError(403)
@@ -579,6 +585,7 @@ def anchor(cursor: str | None, salt: str, limit: int) -> UUID | None:
 
 
 def role_expression(principal: TenantCaller, verified: VerifiedAccessToken, field: str) -> Func:
+    """Use the same member/subteam, ancestor and channel decision as realtime admission."""
     if field not in {"id", "source_id"}:
         raise ValueError("document role expression field refused")
     return Func(
@@ -588,6 +595,7 @@ def role_expression(principal: TenantCaller, verified: VerifiedAccessToken, fiel
         Value(principal.identity_id),
         Value(verified.issuer),
         Value(verified.subject),
+        Value(verified.device_id, output_field=Document._meta.get_field("id")),
         function="docs_document_role",
         output_field=TextField(),
     )

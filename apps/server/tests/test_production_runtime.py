@@ -207,6 +207,73 @@ def test_production_image_excludes_test_and_operator_settings():
             assert_image_boundary(rules)
 
 
+STARTUP_IMPORTS = (
+    "import django; django.setup()",
+    "import config.deploy_wsgi",
+    "import config.wsgi",
+    # The repository has no config.asgi module; exercise Django's ASGI startup directly.
+    "from django.core.asgi import get_asgi_application; get_asgi_application()",
+)
+
+
+def image_startup(tree, entrypoint):
+    program = """
+import sys
+from django.db.backends.base.base import BaseDatabaseWrapper
+def forbidden(*args, **kwargs):
+    raise AssertionError('startup attempted database or network access')
+BaseDatabaseWrapper.ensure_connection = forbidden
+def audit(event, args):
+    if event in {'socket.connect', 'socket.bind', 'socket.getaddrinfo'}:
+        forbidden()
+sys.addaudithook(audit)
+"""
+    program += entrypoint + "\n"
+    program += """
+from django.conf import settings
+from django.urls import get_resolver
+assert settings.DEBUG is False
+get_resolver().url_patterns
+assert 'config.settings.dev' not in sys.modules
+print('production startup imports passed')
+"""
+    return subprocess.run(  # noqa: S603 - fixed interpreter, synthetic environment and owned tree
+        [sys.executable, "-B", "-c", program],
+        cwd=tree,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(tree),
+            "DJANGO_SETTINGS_MODULE": "config.settings.deploy",
+            **inputs(),
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("entrypoint", STARTUP_IMPORTS)
+def test_production_image_startup_imports(tmp_path, entrypoint):
+    from dev.image_context import image_tree
+
+    image_tree(ROOT, tmp_path)
+    result = image_startup(tmp_path, entrypoint)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "production startup imports passed"
+
+
+@pytest.mark.parametrize("module", ["apps/docs/role_grants.py", "apps/docs/api/role_grants.py"])
+def test_production_image_startup_detects_missing_grant_module(tmp_path, module):
+    from dev.image_context import image_tree
+
+    image_tree(ROOT, tmp_path)
+    (tmp_path / module).unlink()
+    result = image_startup(tmp_path, "import config.deploy_wsgi")
+    assert result.returncode != 0
+    assert "ImportError: cannot import name 'role_grants'" in result.stderr
+
+
 FAULT_PROBE = """
 import django, json, sys, threading
 django.setup()
