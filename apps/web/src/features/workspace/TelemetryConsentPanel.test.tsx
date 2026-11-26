@@ -6,6 +6,9 @@ import { track } from '../../analytics/track'
 import { startTelemetry } from '../../analytics/telemetry/bootstrap'
 import {
   hasTelemetryConsent,
+  holdTelemetryForConfidentialContext,
+  resetTelemetryConsentForTests,
+  holdTelemetryForWorkspacePolicy,
   setTelemetryConsent,
   setTelemetryScope,
 } from '../../analytics/telemetry/consent'
@@ -17,6 +20,7 @@ let dispose = () => {}
 beforeEach(async () => {
   await i18n.changeLanguage('en')
   localStorage.clear()
+  resetTelemetryConsentForTests()
   setTelemetryScope({ person: 'person', workspace: 'workspace', slug: 'sample' })
   vi.stubEnv('VITE_POSTHOG_KEY', 'public-project-key')
   vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
@@ -111,5 +115,38 @@ it.each([
     )
     expect(screen.queryByText(/EU analytics service/)).toBeNull()
     expect(screen.queryByText(/already delivered/)).toBeNull()
+  }
+)
+
+it.each(['en', 'fr'])(
+  'explains policy blocks and confidential holds while preserving the choice (%s)',
+  async (language) => {
+    await i18n.changeLanguage(language)
+    setTelemetryConsent(true)
+    render(<TelemetryConsentPanel />)
+    const toggle = screen.getByRole('switch')
+    let releasePolicy = () => {}
+    act(() => {
+      releasePolicy = holdTelemetryForWorkspacePolicy()
+    })
+    expect(toggle).toBeDisabled()
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      language === 'en' ? 'hosting policy' : 'politique d’hébergement'
+    )
+    act(() => releasePolicy())
+    expect(toggle).toBeChecked()
+    let release = () => {}
+    act(() => {
+      release = holdTelemetryForConfidentialContext()
+    })
+    expect(toggle).toBeDisabled()
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      language === 'en' ? 'confidential channel' : 'canal confidentiel'
+    )
+    act(() => release())
+    expect(toggle).toBeEnabled()
+    expect(toggle).toBeChecked()
   }
 )

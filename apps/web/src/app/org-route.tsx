@@ -1,3 +1,7 @@
+import { holdTelemetryForWorkspacePolicy } from '../analytics/telemetry/consent'
+import { isConfiguredEuTelemetry, isWorkspaceTelemetryAllowed } from '../analytics/telemetry/policy'
+import { fetchFirstTenant } from '../features/status/queries'
+import { organisationTenantQueryKey } from './queryKeys'
 import { deferTelemetryScopeBinding } from '../analytics/telemetry/scopeBinding'
 import { announcedTitleKey, contentTitleKey } from './contentTitle'
 // The `/$org` layout route: the auth guard, the slug → organisation
@@ -15,7 +19,7 @@ import {
   useRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -331,6 +335,7 @@ function OrgLayout() {
 }
 
 function OrgLayoutContent() {
+  const queryClient = useQueryClient()
   const { me, membership, meGeneration, meCredentialGeneration } = orgRoute.useLoaderData()
   const { org } = orgRoute.useParams()
   const { t } = useTranslation()
@@ -359,11 +364,66 @@ function OrgLayoutContent() {
   })
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
+  // Resolve hosting policy on every org route, including direct home/status/appearance entries.
+  useQuery({
+    queryKey: organisationTenantQueryKey(membership.organisation.id),
+    queryFn: () => fetchFirstTenant(membership.organisation.id),
+    enabled:
+      hasUsableToken &&
+      !authorityMismatch &&
+      isConfiguredEuTelemetry(import.meta.env.VITE_POSTHOG_KEY, import.meta.env.VITE_POSTHOG_HOST),
+  })
   useLayoutEffect(() => {
-    if (!import.meta.env.VITE_POSTHOG_KEY?.trim()) return
     if (
-      import.meta.env.VITE_POSTHOG_HOST &&
-      import.meta.env.VITE_POSTHOG_HOST !== 'https://eu.i.posthog.com'
+      !isConfiguredEuTelemetry(import.meta.env.VITE_POSTHOG_KEY, import.meta.env.VITE_POSTHOG_HOST)
+    )
+      return
+    let release: (() => void) | undefined
+    const update = () => {
+      type Policy = {
+        hostingMode?: string
+        hosting_mode?: string
+        telemetryEnabled?: boolean
+        telemetry_enabled?: boolean
+      }
+      const memberPolicy = membership as Membership & Policy
+      const tenants = ['organisation-tenant', 'workspace-tenant'].map((key) =>
+        queryClient.getQueryData<Policy | null>([key, membership.organisation.id])
+      )
+      const resolved = tenants.some((tenant) => tenant !== undefined)
+      const allowed =
+        resolved &&
+        (memberPolicy.telemetryEnabled ?? memberPolicy.telemetry_enabled) !== false &&
+        tenants
+          .filter((tenant) => tenant !== undefined)
+          .every((tenant) =>
+            isWorkspaceTelemetryAllowed({
+              planTier: membership.plan_tier,
+              hostingMode: tenant?.hostingMode ?? tenant?.hosting_mode,
+              telemetryEnabled:
+                tenant?.telemetryEnabled ??
+                tenant?.telemetry_enabled ??
+                memberPolicy.telemetryEnabled ??
+                memberPolicy.telemetry_enabled,
+            })
+          )
+      if (!allowed && !release) release = holdTelemetryForWorkspacePolicy()
+      else if (allowed && release) {
+        release()
+        release = undefined
+      }
+    }
+    update()
+    // Apply denials synchronously when either tenant cache changes, before screen effects fire.
+    const unsubscribe = queryClient.getQueryCache().subscribe(update)
+    return () => {
+      unsubscribe()
+      release?.()
+    }
+  }, [membership, queryClient])
+  useLayoutEffect(() => {
+    if (
+      !isConfiguredEuTelemetry(import.meta.env.VITE_POSTHOG_KEY, import.meta.env.VITE_POSTHOG_HOST)
     )
       return
     if (authorityMismatch || !hasUsableToken) return

@@ -111,16 +111,31 @@ function usePublishedHeight(ref: RefObject<HTMLElement | null>, property: string
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
-    const root = document.documentElement
+    // Publish measured geometry in a stylesheet, keeping the document free of style attributes.
+    if (!Array.isArray(document.adoptedStyleSheets) || typeof CSSStyleSheet === 'undefined') {
+      // Static token geometry is conservative when the browser cannot adopt measured rules.
+      const fallback =
+        property === '--shell-header-block'
+          ? 'shell-header-height-fallback'
+          : 'shell-tab-height-fallback'
+      document.documentElement.classList.add(fallback)
+      return () => document.documentElement.classList.remove(fallback)
+    }
+    const sheet = new CSSStyleSheet()
+    sheet.insertRule(':root {}')
+    const rule = sheet.cssRules[0] as CSSStyleRule
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
     const publish = () => {
-      root.style.setProperty(property, `${element.offsetHeight + FOCUS_CLEARANCE}px`)
+      rule.style.setProperty(property, `${element.offsetHeight + FOCUS_CLEARANCE}px`)
     }
     publish()
     const observer = new ResizeObserver(publish)
     observer.observe(element)
     return () => {
       observer.disconnect()
-      root.style.removeProperty(property)
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+        (candidate) => candidate !== sheet
+      )
     }
   }, [ref, property])
 }

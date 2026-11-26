@@ -1,3 +1,4 @@
+import { EU_INGESTION_HOST, isConfiguredEuTelemetry } from './analytics/telemetry/policy'
 // The entry point. Boot order matters: i18n before anything renders (a
 // missing key throws outside production — src/i18n/index.ts), then
 // MSW before the router's first request (docs/dev/TESTING.md) — and only when
@@ -83,10 +84,12 @@ export async function boot(entry?: BootEntry): Promise<void> {
     </StrictMode>
   )
 
-  // Literal build gate: an unconfigured deployment emits no collection transport.
+  // Keep the literal key gate so unconfigured builds omit the collection transport.
   if (import.meta.env.VITE_POSTHOG_KEY?.trim()) {
-    const host = import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com'
-    if (host === 'https://eu.i.posthog.com') {
+    if (
+      isConfiguredEuTelemetry(import.meta.env.VITE_POSTHOG_KEY, import.meta.env.VITE_POSTHOG_HOST)
+    ) {
+      const host = import.meta.env.VITE_POSTHOG_HOST?.trim() || EU_INGESTION_HOST
       void import('./analytics/telemetry/bootstrap')
         .then(({ startTelemetry }) =>
           startTelemetry(router, import.meta.env.VITE_POSTHOG_KEY, host)

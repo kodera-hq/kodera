@@ -8,6 +8,8 @@ const PREFIX = 'kodera.telemetry.consent.v1:'
 let scope: Readonly<TelemetryScope> | undefined
 let accepted = false
 let version = 0
+const workspacePolicyHolds = new Set<symbol>()
+const confidentialHolds = new Set<symbol>()
 const denied = new Set<string>()
 const listeners = new Set<() => void>()
 const key = (value: TelemetryScope) => PREFIX + JSON.stringify([value.person, value.workspace])
@@ -30,7 +32,45 @@ export function getTelemetryScope() {
   return scope
 }
 export function hasTelemetryConsent(): boolean {
-  return accepted && scope !== undefined
+  return (
+    accepted &&
+    scope !== undefined &&
+    workspacePolicyHolds.size === 0 &&
+    confidentialHolds.size === 0
+  )
+}
+/** Leases overlap safely: leaving one protected surface cannot release another's hold. */
+export function holdTelemetryForConfidentialContext(): () => void {
+  const lease = Symbol()
+  confidentialHolds.add(lease)
+  notify()
+  return () => {
+    if (confidentialHolds.delete(lease)) notify()
+  }
+}
+export function isTelemetryConfidentiallyHeld(): boolean {
+  return confidentialHolds.size > 0
+}
+/** Each policy owner releases only its own denial, including during credential refresh. */
+export function holdTelemetryForWorkspacePolicy(): () => void {
+  const lease = Symbol()
+  workspacePolicyHolds.add(lease)
+  notify()
+  return () => {
+    if (workspacePolicyHolds.delete(lease)) notify()
+  }
+}
+export function isTelemetryWorkspacePolicyAllowed(): boolean {
+  return workspacePolicyHolds.size === 0
+}
+/** Test isolation only; persisted preferences are deliberately untouched. */
+export function resetTelemetryConsentForTests(): void {
+  scope = undefined
+  accepted = false
+  workspacePolicyHolds.clear()
+  confidentialHolds.clear()
+  denied.clear()
+  notify()
 }
 export function setTelemetryScope(value: TelemetryScope | undefined): () => void {
   const owner = value ? Object.freeze({ ...value }) : undefined

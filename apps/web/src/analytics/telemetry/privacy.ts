@@ -1,6 +1,8 @@
 import type { AnalyticsEvent, TrackProperties } from '../track'
+import { EU_INGESTION_HOST, isConfiguredEuTelemetry, isWorkspaceTelemetryAllowed } from './policy'
 
-export const EU_INGESTION_HOST = 'https://eu.i.posthog.com'
+export { EU_INGESTION_HOST, isConfiguredEuTelemetry, isWorkspaceTelemetryAllowed }
+
 /** No DOM collection is installed. These restrictions also govern any future adapter. */
 export const CAPTURE_PRIVACY = Object.freeze({
   maskAllInputs: true,

@@ -9,6 +9,9 @@
 // stylesheet. tests/unit/serving/radix-select-style.test.ts holds the plugin to the installed
 // package and the stylesheet to the rule.
 //
+// Toast pointer events and the roving-focus root outline are also fixed library rules.
+// They become static classes, with the same exact-signature upgrade checks.
+//
 // Dependency pre-bundling in `vite dev` does not run it; the dev server sends no policy, and the
 // production build — the only bundle the strict server serves — does.
 
@@ -48,13 +51,37 @@ export function stripRadixSelectViewportStyle(code: string, id = '@radix-ui/reac
   return code.replace(STYLE_ELEMENT, 'null')
 }
 
+/** The toast region's pointer-event state belongs in a static class as well. */
+export function stripRadixToastViewportStyle(code: string): string {
+  const style = /style: \{ pointerEvents: hasToasts \? void 0 : "none" \}/g
+  if ((code.match(style)?.length ?? 0) !== 1)
+    throw new Error('Expected exactly one toast viewport pointer-event style.')
+  return code.replace(style, 'className: hasToasts ? void 0 : "csp-toast-empty"')
+}
+
+/** Roving focus keeps keyboard focus on its children, without an inline outline rule. */
+export function stripRadixRovingFocusStyle(code: string): string {
+  const style = /style: \{ outline: "none", \.\.\.props.style \}/g
+  if ((code.match(style)?.length ?? 0) !== 1)
+    throw new Error('Expected exactly one roving focus outline style.')
+  return code.replace(
+    style,
+    'className: [groupProps.className, "csp-roving-focus"].filter(Boolean).join(" ")'
+  )
+}
+
 export function radixSelectViewportStylePlugin(): Plugin {
   return {
     name: 'kodera-radix-select-viewport-style',
     enforce: 'pre',
     transform(code, id) {
-      if (!MODULE.test(id.split('?')[0]!)) return null
-      return { code: stripRadixSelectViewportStyle(code, id), map: null }
+      const moduleId = id.split('?')[0]!
+      if (MODULE.test(moduleId)) return { code: stripRadixSelectViewportStyle(code, id), map: null }
+      if (/[\\/]@radix-ui[\\/]react-toast[\\/]dist[\\/]index\.m?js$/.test(moduleId))
+        return { code: stripRadixToastViewportStyle(code), map: null }
+      if (/[\\/]@radix-ui[\\/]react-roving-focus[\\/]dist[\\/]index\.m?js$/.test(moduleId))
+        return { code: stripRadixRovingFocusStyle(code), map: null }
+      return null
     },
   }
 }

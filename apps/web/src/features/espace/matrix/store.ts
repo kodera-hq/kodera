@@ -1683,7 +1683,10 @@ export class EspaceStore {
     const policy = room.currentState.getStateEvents(POLICY, '')?.getContent() as
       { kind?: unknown } | undefined
     const kind = policy?.kind === 'audio' ? 'audio' : 'text'
-    if (this.#joinedTelemetry.delete(room.roomId)) {
+    if (
+      this.#joinedTelemetry.delete(room.roomId) &&
+      permitsPlaintext(this.getRoomBoundary(room.roomId))
+    ) {
       track('channel_joined', { kind: kind === 'audio' ? 'voice' : 'chat' })
     }
     const occupancy =

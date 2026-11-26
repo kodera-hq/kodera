@@ -2666,6 +2666,31 @@ it('does not publish an avatar whose upload settles after its Matrix session sto
   expect(publish).not.toHaveBeenCalled()
 })
 
+describe('room join diagnostics respect the verified boundary', () => {
+  it.each(['ordinary', 'community', 'unknown', 'confidential-unavailable', 'invalid'] as const)(
+    'emits a joined milestone only for plaintext (%s)',
+    async (boundary) => {
+      const fixture = snapshotFixture([])
+      const joined: unknown[] = []
+      const off = onTrack((event) => {
+        if (event.name === 'channel_joined') joined.push(event)
+      })
+      try {
+        await fixture.start()
+        const client = matrixClientForTests(fixture.store)
+        vi.spyOn(client, 'getRoom').mockReturnValueOnce(null)
+        vi.spyOn(client, 'joinRoom').mockResolvedValue({} as Room)
+        vi.spyOn(fixture.store, 'getRoomBoundary').mockReturnValue(boundary)
+        await fixture.store.join(SNAPSHOT_ROOM)
+        expect(joined).toHaveLength(boundary === 'ordinary' || boundary === 'community' ? 1 : 0)
+      } finally {
+        off()
+        fixture.store.stop()
+      }
+    }
+  )
+})
+
 describe('confidential room plaintext quarantine', () => {
   const AGENT = '@kodera-agent:matrix.acme.kodera.io'
   function protectedState(algorithm: string) {

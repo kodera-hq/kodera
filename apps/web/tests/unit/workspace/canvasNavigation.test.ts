@@ -1,3 +1,4 @@
+import { onTrack } from '../../../src/analytics/track'
 import { expect, it, vi } from 'vitest'
 import { CanvasNavigation } from '../../../src/features/workspace/canvasNavigation'
 
@@ -38,4 +39,18 @@ it('applies reduced motion immediately and retires pending work when the owner l
   pending.dispose()
   update()
   expect(apply).toHaveBeenCalledTimes(1)
+})
+
+it('suppresses a transition into a confidential target even before its render acquires a hold', () => {
+  const capture = vi.fn()
+  const stop = onTrack(capture)
+  try {
+    const navigation = new CanvasNavigation(() => {}, { reducedMotion: () => true })
+    navigation.change('docs', false)
+    expect(capture).not.toHaveBeenCalled()
+    navigation.change('chat')
+    expect(capture).toHaveBeenCalledOnce()
+  } finally {
+    stop()
+  }
 })

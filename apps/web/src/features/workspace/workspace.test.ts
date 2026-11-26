@@ -370,3 +370,26 @@ describe('arrivals display precedence', () => {
     expect(currentChannel(read, undefined)?.id).toBe('arrival')
   })
 })
+
+it.each(['hostingMode', 'hosting_mode'])('preserves the tenant hosting policy from %s', (field) => {
+  const tenant = requireTenant({ slug: 'sample', status: 'active', [field]: 'cloud-dedicated' })
+  expect(tenant.hostingMode).toBe('cloud-dedicated')
+  if (field === 'hosting_mode') expect(tenant.hosting_mode).toBe('cloud-dedicated')
+})
+
+it.each(['hostingMode', 'hosting_mode'])(
+  'normalizes dedicated hosting and retains explicit telemetry policy from %s',
+  (field) => {
+    const tenant = requireTenant({
+      slug: 'sample',
+      status: 'active',
+      [field]: 'cloud_dedicated',
+      telemetry_enabled: false,
+    })
+    expect(tenant.hostingMode).toBe('cloud-dedicated')
+    expect(tenant.telemetryEnabled).toBe(false)
+    expect(
+      requireTenant({ slug: 'sample', status: 'active', telemetryEnabled: true }).telemetryEnabled
+    ).toBe(true)
+  }
+)

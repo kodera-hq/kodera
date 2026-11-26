@@ -1,3 +1,4 @@
+import { isTelemetryConfidentiallyHeld } from '../../analytics/telemetry/consent'
 // What the live view draws again, and what it does not. The view is cut into parts that each read
 // their own slice (`MessageTimeline` and its `MessageRow`s, `MessageComposer`, `ChannelSidebar`,
 // `VoiceCallDock`), so that writing a message draws the field being written in and nothing else.
@@ -599,4 +600,22 @@ describe('the typing proof refuses each mutant', () => {
     const measure = await typeInComposer(WORD, { mutant: 'unmemoised', messages: 60 })
     expect(measure.rowDraws.length).toBeGreaterThanOrEqual(WORD.length * measure.drawn)
   })
+})
+
+it('holds telemetry when the draft authority rejects the entire live view', () => {
+  probe.memory = { ...makeMemory(), canPresent: () => false, canKeepView: () => false }
+  const room = makeStore(1)
+  const view = render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={room.store}
+    />
+  )
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  expect(isTelemetryConfidentiallyHeld()).toBe(true)
+  view.unmount()
+  expect(isTelemetryConfidentiallyHeld()).toBe(false)
 })
