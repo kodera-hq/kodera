@@ -72,6 +72,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED": "false",
     "KODERA_CORE_AUTHORITY_ORIGIN": "",
     "KODERA_DOMAIN": "chat.example.org",
+    "KODERA_APP_ORIGIN": "",
     "KODERA_ACME_EMAIL": "ops@example.org",
     "DJANGO_ALLOWED_HOSTS": "chat.example.org,127.0.0.1,server",
     "KODERA_OIDC_PROVIDER_ORIGIN": "https://id.example.org",
@@ -341,7 +342,9 @@ def console_configuration_errors(environment: dict[str, str]) -> list[str]:
 
 
 SINGLE_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:-chat.example.org}"
-SPLIT_CONSOLE_ORIGINS_EXPRESSION = "https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}"
+SPLIT_CONSOLE_ORIGINS_EXPRESSION = (
+    "https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}${KODERA_APP_ORIGIN:+,}${KODERA_APP_ORIGIN:-}"
+)
 ADMISSION_TRUSTED_EDGE_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}/32"
 TRUSTED_EDGE_EXPRESSION = "${KODERA_ADMISSION_API_ADDRESS:-172.30.240.4}/32"
 CADDY_API_ADDRESS_EXPRESSION = "${KODERA_CADDY_API_ADDRESS:-172.30.240.2}"
@@ -1288,14 +1291,20 @@ SPLIT_OVERRIDE_KEYS: dict[str, frozenset[str]] = {
     "synapse": frozenset({"environment"}),
 }
 SPLIT_OVERRIDE_ENVIRONMENT: dict[str, dict[str, str]] = {
-    "caddy": {"KODERA_MATRIX_DOMAIN": "${KODERA_MATRIX_DOMAIN:?"},
-    "server": {
-        "KODERA_CONSOLE_ORIGINS": "https://${KODERA_DOMAIN:?",
-        "KODERA_COLLAB_PUBLIC_URL": "wss://api.${KODERA_MATRIX_DOMAIN:?",
+    "caddy": {
+        "KODERA_MATRIX_DOMAIN": "${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}",
+        "KODERA_APP_ORIGIN": "${KODERA_APP_ORIGIN:-}",
     },
-    "yjs-collab": {"KODERA_COLLAB_ALLOWED_ORIGINS": "https://${KODERA_DOMAIN:?"},
-    "room-access": {"LIVEKIT_WS_URL": "wss://livekit.${KODERA_DOMAIN:?"},
-    "synapse": {COMPOSE_TOPOLOGY_ENV_NAME: "split"},
+    "server": {
+        "KODERA_CONSOLE_ORIGINS": SPLIT_CONSOLE_ORIGINS_EXPRESSION,
+        "KODERA_COLLAB_PUBLIC_URL": "wss://api.${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}/documents/collab",
+    },
+    "yjs-collab": {"KODERA_COLLAB_ALLOWED_ORIGINS": SPLIT_CONSOLE_ORIGINS_EXPRESSION},
+    "room-access": {
+        "LIVEKIT_WS_URL": "wss://livekit.${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}",
+        "ROOM_ACCESS_ALLOWED_ORIGINS": SPLIT_CONSOLE_ORIGINS_EXPRESSION,
+    },
+    "synapse": {COMPOSE_TOPOLOGY_ENV_NAME: "split", "KODERA_APP_ORIGIN": "${KODERA_APP_ORIGIN:-}"},
 }
 SPLIT_CADDY_MOUNT = "- ./Caddyfile.split:/etc/caddy/Caddyfile:ro"
 
@@ -1323,8 +1332,8 @@ def check_split_topology(override_text: str, split_caddyfile_text: str, env_text
         for key, value in service.environment.items():
             if key not in expected:
                 errors.append(f"docker-compose.split.yml sets an unreviewed variable {key} on service '{name}'")
-            elif not value.startswith(expected[key]):
-                errors.append(f"docker-compose.split.yml must set {key} on service '{name}' to {expected[key]}...")
+            elif value != expected[key]:
+                errors.append(f"docker-compose.split.yml must set {key} on service '{name}' to {expected[key]}")
         for key in expected:
             if key not in service.environment:
                 errors.append(f"docker-compose.split.yml must set {key} on service '{name}'")
@@ -1629,9 +1638,16 @@ SPLIT_CADDY_SITES: dict[str, frozenset[str]] = {
     SPLIT_MATRIX_SITE: frozenset({"synapse:8008", "room-access:8095"}),
     SPLIT_LIVEKIT_SITE: frozenset({"livekit:7880"}),
 }
-# Synapse answers every origin with `Access-Control-Allow-Origin: *`. On its own origin that grant
-# is replaced by the one console origin; the API and room-access already grant exact origins only.
-SPLIT_SYNAPSE_CORS = 'header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"'
+# The single topology returns its fixed web origin. Split matches the complete Origin value
+# before returning it, including on denials from the Matrix scope check.
+SINGLE_SYNAPSE_CORS = 'header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"'
+SPLIT_STRIP_CORS = "header_down -Access-Control-Allow-Origin"
+SPLIT_SCOPE_LINES = (*REVIEWED_SCOPE_LINES, SPLIT_STRIP_CORS)
+SPLIT_CORS_LINES = (
+    "@web_origin vars {http.request.header.Origin} https://{$KODERA_DOMAIN} {$KODERA_APP_ORIGIN}",
+    "header @web_origin Access-Control-Allow-Origin {http.request.header.Origin}",
+    "header +Vary Origin",
+)
 SYNAPSE_STRIP_SERVER = "header_down -Server"
 SYNAPSE_STRIP_EXPOSED_SERVER = (
     'header_down Access-Control-Expose-Headers "(?i)(?:,\\s*server(\\s*,|$)|^\\s*server\\s*,\\s*|^\\s*server\\s*$)" "$1"'
@@ -1639,7 +1655,7 @@ SYNAPSE_STRIP_EXPOSED_SERVER = (
 SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     (REVIEWED_CADDY_SITE, "api-admission:8080"): (),
     (REVIEWED_CADDY_SITE, "synapse:8008"): (
-        SPLIT_SYNAPSE_CORS,
+        SINGLE_SYNAPSE_CORS,
         SYNAPSE_STRIP_SERVER,
         SYNAPSE_STRIP_EXPOSED_SERVER,
     ),
@@ -1647,7 +1663,7 @@ SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
 SPLIT_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     (SPLIT_API_SITE, "api-admission:8080"): (),
     (SPLIT_MATRIX_SITE, "synapse:8008"): (
-        SPLIT_SYNAPSE_CORS,
+        SPLIT_STRIP_CORS,
         SYNAPSE_STRIP_SERVER,
         SYNAPSE_STRIP_EXPOSED_SERVER,
     ),
@@ -1802,7 +1818,13 @@ def _check_caddy(
             ):
                 closed_paths.update(matchers[matcher])
             upstreams: list[tuple[str, list[str]]] = []
+            split_matrix = site.header == SPLIT_MATRIX_SITE and block.header == "handle @matrix"
+            scope_lines = SPLIT_SCOPE_LINES if split_matrix else REVIEWED_SCOPE_LINES
+            if split_matrix and tuple(block.lines) != SPLIT_CORS_LINES:
+                errors.append(f"{label} must grant Matrix CORS only to an exact web origin and vary by Origin")
             for line in block.lines:
+                if split_matrix and line in SPLIT_CORS_LINES:
+                    continue
                 if _directive(line) == "reverse_proxy":
                     upstreams.extend((upstream, []) for upstream in line.split()[1:])
                 elif _directive(line) == "import":
@@ -1815,7 +1837,7 @@ def _check_caddy(
                         errors.append(f"{label} must set the reviewed API body limit: max_size 1MiB")
                     continue
                 if child.header == "forward_auth synapse:8008":
-                    if child.blocks or tuple(child.lines) != REVIEWED_SCOPE_LINES:
+                    if child.blocks or tuple(child.lines) != scope_lines:
                         errors.append(f"{label} must retain the exact Matrix request-scope gate")
                     continue
                 words = child.header.split()
@@ -1841,7 +1863,9 @@ def _check_caddy(
                 upstreams.append((words[1], directives))
             scopes = [child for child in block.blocks if child.header.startswith("forward_auth")]
             if any(upstream == "synapse:8008" for upstream, _ in upstreams):
-                if len(scopes) != 1 or scopes[0].header != "forward_auth synapse:8008" or tuple(scopes[0].lines) != REVIEWED_SCOPE_LINES:
+                if site.header == SPLIT_MATRIX_SITE and not split_matrix:
+                    errors.append(f"{label} must route Synapse through the Matrix CORS matcher")
+                if len(scopes) != 1 or scopes[0].header != "forward_auth synapse:8008" or tuple(scopes[0].lines) != scope_lines:
                     errors.append(f"{label} must retain the exact Matrix request-scope gate")
             elif scopes:
                 errors.append(f"{label} must scope forward_auth to Matrix client traffic")
@@ -1963,6 +1987,7 @@ PILOT_SETTINGS = {
     "enable_authenticated_media": True,
     "encryption_enabled_by_default_for_room_type": "off",
     "require_auth_for_profile_requests": True,
+    "user_directory": {"search_all_users": False},
     "allow_public_rooms_over_federation": False,
     "allow_public_rooms_without_auth": False,
 }
@@ -1993,6 +2018,7 @@ def _existing_homeserver() -> dict:
     document = _generated_homeserver()
     document["enable_set_displayname"] = False
     document["sso"] = {"update_profile_information": True}
+    document["user_directory"] = {"search_all_users": True}
     return document
 
 
@@ -2164,8 +2190,8 @@ def check_synapse_config(source: str) -> list[str]:
             # neither claim may ever reach a public display name.
             if "preferred_username" in template or "email" in template:
                 problems.append(f"Synapse OIDC sign-in must never expose the preferred_username or email claim in the public display name ({idp_id})")
-            if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"] or signed.get("public_baseurl") != "https://chat.example.org/":
-                problems.append(f"Synapse OIDC sign-in must return to the web origin with a trailing slash only ({idp_id})")
+            if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/espace/callback"] or signed.get("public_baseurl") != "https://chat.example.org/":
+                problems.append(f"Synapse OIDC sign-in must return to the web callback only ({idp_id})")
             if (signed.get("password_config") or {}).get("enabled") is not False or signed.get("enable_registration") is not False:
                 problems.append(f"Synapse OIDC sign-in must keep password sign-in and registration off ({idp_id})")
             if configure(copy.deepcopy(signed), environment) != signed:
@@ -2229,8 +2255,19 @@ def check_synapse_config(source: str) -> list[str]:
         signed = configure(_existing_homeserver(), community)
         if signed.get("public_baseurl") != "https://matrix.chat.example.org/":
             problems.append("Synapse split topology must publish its client API at https://matrix.<server_name>/")
-        if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"]:
-            problems.append("Synapse split sign-in must return the login token to the web origin https://<server_name>/ only")
+        if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/espace/callback"]:
+            problems.append("Synapse split sign-in must return the login token to the web callback only")
+        app = configure(copy.deepcopy(signed), dict(community, KODERA_APP_ORIGIN="https://app.example.org"))
+        if app["sso"]["client_whitelist"] != ["https://chat.example.org/espace/callback", "https://app.example.org/espace/callback"]:
+            problems.append("Synapse split sign-in must grant only the two web callback prefixes")
+        if (app["user_directory"].get("search_all_users") is not False or app["allow_public_rooms_without_auth"] is not False
+                or app["allow_public_rooms_over_federation"] is not False or app["federation_domain_whitelist"] != []
+                or "federation" in listener_names(app)):
+            problems.append("A second web origin must preserve Matrix directory privacy and closed federation")
+        if configure(copy.deepcopy(app), split)["sso"]["client_whitelist"] != signed["sso"]["client_whitelist"]:
+            problems.append("Synapse must revoke the optional callback when OIDC and the app origin are removed")
+        if configure(copy.deepcopy(app), community) != signed:
+            problems.append("Synapse must revoke the optional callback when its origin is removed")
         if configure(copy.deepcopy(signed), community) != signed:
             problems.append("Synapse split configuration must be idempotent across restarts")
         if configure(copy.deepcopy(plain), {}).get("public_baseurl") == "https://matrix.chat.example.org/":
@@ -2558,7 +2595,33 @@ def _valid_attachment_base(value: str, *, core_origin: str, provider_origin: str
     return origin not in {core_origin.rstrip("/"), provider_origin.rstrip("/")}
 
 
-def preflight_env(env_example_text: str, env_text: str) -> list[str]:
+def app_origin_errors(settings: dict[str, str], validate: Callable[[str, bool], None]) -> list[str]:
+    origin = settings["KODERA_APP_ORIGIN"]
+    if not origin:
+        return []
+    try:
+        validate(origin, settings[TOPOLOGY_ENV_NAME] == "split")
+    except ValueError as error:
+        return [str(error)]
+    web = settings["KODERA_DOMAIN"].lower()
+    base = settings["KODERA_MATRIX_DOMAIN"].lower()
+    host = origin.removeprefix("https://")
+    if not host.endswith("." + base):
+        return ["KODERA_APP_ORIGIN must be a subdomain of KODERA_MATRIX_DOMAIN"]
+    reserved_hosts = {web, f"api.{base}", f"matrix.{web}", f"livekit.{web}"}
+    try:
+        issuers = json.loads(settings["KODERA_AUTH_TRUST"])
+        urls = [settings["KODERA_OIDC_PROVIDER_ORIGIN"]]
+        urls.extend(entry["issuer"] for entry in issuers if isinstance(entry, dict) and isinstance(entry.get("issuer"), str))
+        reserved_hosts.update((urllib.parse.urlsplit(url).hostname or "").rstrip(".") for url in urls)
+    except (TypeError, ValueError):
+        return ["KODERA_APP_ORIGIN requires valid OIDC origins"]
+    if host in reserved_hosts:
+        return ["KODERA_APP_ORIGIN must be distinct from the primary web, API, Matrix, LiveKit and OIDC hosts"]
+    return []
+
+
+def preflight_env(env_example_text: str, env_text: str, *, shell_environment=None) -> list[str]:
     """Check an operator's .env against .env.example. Names keys, never values."""
     example, _ = parse_env_example(env_example_text)
     actual, parse_errors = parse_env_example(env_text)
@@ -2567,7 +2630,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_CHANNEL_GOVERNANCE_ENABLED", "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", "KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS", "KODERA_ADMISSION_API_ADDRESS") and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_CHANNEL_GOVERNANCE_ENABLED", "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", "KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_APP_ORIGIN", "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE", "KODERA_ATTACHMENT_BASE", "KODERA_API_INGRESS_SUBNET", "KODERA_CADDY_API_ADDRESS", "KODERA_SERVER_API_ADDRESS", "KODERA_ADMISSION_API_ADDRESS") and not actual.get(key, "").strip("'\""):
             continue  # Empty optional configuration retains the reviewed Compose defaults.
         if key in AGENT_ENV_NAMES and actual.get("KODERA_CORE_AUTHORITY_ORIGIN", "").strip("'\""):
             pass  # Isolated governed deployments also enroll an organisation agent.
@@ -2695,6 +2758,19 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
         if not admitted:
             errors.append("KODERA_DEFAULT_COMMUNITY_ISSUER must be admitted on the customer trust lane")
     topology = actual.get(TOPOLOGY_ENV_NAME, "").strip("'\"") or "single"
+    origin_settings = {}
+    for key in ("KODERA_APP_ORIGIN", TOPOLOGY_ENV_NAME, "KODERA_DOMAIN", "KODERA_MATRIX_DOMAIN",
+                "KODERA_OIDC_PROVIDER_ORIGIN", "KODERA_AUTH_TRUST"):
+        value = actual.get(key, "")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        origin_settings[key] = value
+    errors.extend(app_origin_errors(origin_settings, renderer["validate_app_origin"]))
+    if shell_environment:
+        # Compose gives exported variables precedence over --env-file.
+        effective = {key: shell_environment.get(key, value) for key, value in origin_settings.items()}
+        if effective != origin_settings:
+            errors.extend(app_origin_errors(effective, renderer["validate_app_origin"]))
     if topology not in TOPOLOGIES:
         errors.append(f"{TOPOLOGY_ENV_NAME} must be single or split")
     elif topology == "split":
@@ -2844,8 +2920,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     for file_name in ("Caddyfile", "Caddyfile.split"):
         source = (ROOT / "deploy/community" / file_name).read_text()
         check = check_caddy_routes if file_name == "Caddyfile" else check_split_caddy_routes
-        gate = "\t\tforward_auth synapse:8008 {\n" + "".join("\t\t\t" + line + "\n" for line in REVIEWED_SCOPE_LINES) + "\t\t}\n"
-        for line in REVIEWED_SCOPE_LINES:
+        scope_lines = SPLIT_SCOPE_LINES if file_name == "Caddyfile.split" else REVIEWED_SCOPE_LINES
+        gate = "\t\tforward_auth synapse:8008 {\n" + "".join("\t\t\t" + line + "\n" for line in scope_lines) + "\t\t}\n"
+        for line in scope_lines:
             changed = source.replace(gate, gate.replace("\t\t\t" + line + "\n", "", 1), 1)
             if not any("request-scope gate" in error for error in check(changed)):
                 print(f"[FAIL] Matrix scope mutation escaped: {file_name} {line}", file=sys.stderr)
@@ -3364,12 +3441,12 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "single-origin Synapse keeps granting wildcard CORS",
-            lambda c, e, cf: (c, e, cf.replace(f"\t\t\t{SPLIT_SYNAPSE_CORS}\n", "", 1)),
-            f"Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'",
+            lambda c, e, cf: (c, e, cf.replace(f"\t\t\t{SINGLE_SYNAPSE_CORS}\n", "", 1)),
+            f"Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': '{SINGLE_SYNAPSE_CORS}'",
         ),
         (
             "single-origin Synapse sets wildcard Access-Control-Allow-Origin",
-            lambda c, e, cf: (c, e, cf.replace(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"', 1)),
+            lambda c, e, cf: (c, e, cf.replace(SINGLE_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"', 1)),
             "Caddyfile has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'",
         ),
         (
@@ -3403,8 +3480,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                 c,
                 e,
                 cf.replace(
-                    f"reverse_proxy synapse:8008 {{\n\t\t\timport client_address\n\t\t\t{SPLIT_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
-                    f"reverse_proxy synapse:8008 {{\n\t\t\t{SPLIT_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    f"reverse_proxy synapse:8008 {{\n\t\t\timport client_address\n\t\t\t{SINGLE_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    f"reverse_proxy synapse:8008 {{\n\t\t\t{SINGLE_SYNAPSE_CORS}\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
                     1,
                 ),
             ),
@@ -3679,7 +3756,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key in ("KODERA_CORE_AUTHORITY_ORIGIN", "KODERA_CHANNEL_GOVERNANCE_ENABLED", "KODERA_GOVERNANCE_AUTHORITY_CONFIGURED", "KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
-        else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_ATTACHMENT_BASE")
+        else f"{key}=" if key in ("KODERA_APP_ORIGIN", "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_ATTACHMENT_BASE")
         else f"{key}=console" if key == "KODERA_OIDC_CLIENT_ID"
         else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
         else f"{key}=172.30.240.0/28" if key == "KODERA_API_INGRESS_SUBNET"
@@ -3737,10 +3814,26 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                                 "KODERA_MATRIX_DOMAIN", "example.net"), "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1,server")
     topology_accepted = (
         ("an .env written before topologies existed", re.sub(r"(?m)^" + TOPOLOGY_ENV_NAME + r"=.*\n?", "", filled)),
+        ("a split deployment with a second web origin", setting(split_env, "KODERA_APP_ORIGIN", "https://app.example.net")),
+        ("a split deployment predating the app origin", split_env.replace("KODERA_APP_ORIGIN=\n", "")),
         ("an empty topology", setting(filled, TOPOLOGY_ENV_NAME, "")),
         ("the split topology with its API and internal server hosts", split_env),
     )
     topology_refused = (
+        ("a second web origin on single", setting(filled, "KODERA_APP_ORIGIN", "https://app.example.net"),
+         "KODERA_APP_ORIGIN requires the split topology"),
+        *(("an app origin outside the tenant subdomains", setting(split_env, "KODERA_APP_ORIGIN", "https://" + host),
+           "KODERA_APP_ORIGIN must be a subdomain of KODERA_MATRIX_DOMAIN")
+          for host in ("app.example.org", "example.net", "notexample.net")),
+        *(("a malformed app origin", setting(split_env, "KODERA_APP_ORIGIN", value),
+           "KODERA_APP_ORIGIN must be an exact public HTTPS origin")
+          for value in ("http://app.example.net", "https://u:p@app.example.net", "https://@app.example.net",
+                        "https://app.example.net:443", "https://app.example.net/", "https://app.example.net/path",
+                        "https://app.example.net?", "https://app.example.net#", "https://*.example.net",
+                        "https://app.example.net,https://alt.example.net", "https://app.internal")),
+        *(("a reserved app origin", setting(split_env, "KODERA_APP_ORIGIN", "https://" + host),
+           "KODERA_APP_ORIGIN must be distinct from the primary web, API, Matrix, LiveKit and OIDC hosts")
+          for host in ("chat.example.net", "api.example.net", "matrix.chat.example.net", "livekit.chat.example.net", "id.example.net")),
         ("an unknown topology", setting(filled, TOPOLOGY_ENV_NAME, "both"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
         ("a topology in another case", setting(filled, TOPOLOGY_ENV_NAME, "Split"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
         ("split with the single-origin allowed hosts", setting(split_env, "DJANGO_ALLOWED_HOSTS", "chat.example.net,127.0.0.1,server"),
@@ -3754,6 +3847,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ("split with the web origin on the base domain itself", setting(split_env, "KODERA_DOMAIN", "example.net"),
          "KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology"),
     )
+    if not preflight_env(env_text, split_env, shell_environment={"KODERA_APP_ORIGIN": "https://api.example.net"}):
+        print("[FAIL] preflight accepted a conflicting exported app origin", file=sys.stderr)
+        return 1
     for label, env in topology_accepted:
         if preflight_env(env_text, env):
             print(f"[FAIL] preflight refuses {label}: {preflight_env(env_text, env)}", file=sys.stderr)
@@ -3994,16 +4090,16 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "enable_set_displayname is not true: fresh, kodera, single"),
     ("split topology disables member display-name edits", 'document["enable_set_displayname"] = True', 'document["enable_set_displayname"] = not split',
      "enable_set_displayname is not true: fresh, no OIDC, split"),
-    ("the login token goes to a look-alike origin", 'document["sso"]["client_whitelist"] = [f"https://{server}/"]', 'document["sso"]["client_whitelist"] = [f"https://{server}"]',
-     "Synapse OIDC sign-in must return to the web origin with a trailing slash only"),
+    ("the login token goes to a look-alike origin", 'callbacks = [f"https://{server}/espace/callback"]', 'callbacks = [f"https://{server}"]',
+     "Synapse OIDC sign-in must return to the web callback only"),
     ("a plain-http issuer is accepted", 'r"https://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer', 'r"https?://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer',
      "Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential"),
     ("an unrelated identity provider is replaced", 'raise ValueError("Synapse sign-in refuses to replace an unrelated identity provider")', 'pass',
      "Synapse OIDC sign-in must not silently replace an unrelated identity provider (kodera)"),
     ("the split client API is published on the web origin", 'split_baseurl = f"https://matrix.{server}/"', 'split_baseurl = f"https://{server}/"',
      "Synapse split topology must publish its client API at https://matrix.<server_name>/"),
-    ("split sign-in returns the login token to the Matrix origin", 'document["sso"]["client_whitelist"] = [f"https://{server}/"]', 'document["sso"]["client_whitelist"] = [split_baseurl if split else f"https://{server}/"]',
-     "Synapse split sign-in must return the login token to the web origin https://<server_name>/ only"),
+    ("split sign-in returns the login token to the Matrix origin", 'callbacks = [f"https://{server}/espace/callback"]', 'callbacks = [split_baseurl if split else f"https://{server}/espace/callback"]',
+     "Synapse split sign-in must return the login token to the web callback only"),
     ("a topology the Compose files do not run is accepted", '    if chosen != running:', '    if False:',
      "Synapse must refuse a topology the Compose files do not run"),
     ("an unknown topology is accepted", '    if chosen not in TOPOLOGIES or running not in TOPOLOGIES:', '    if False:',
@@ -4061,8 +4157,12 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "(got '/_matrix/media/v3/download/*')"),
     ("the Matrix origin exposes legacy media r0 download", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/media/r0/download/*"),
      "(got '/_matrix/media/r0/download/*')"),
-    ("Synapse keeps granting every origin", "caddy", _first("\t\t\t" + SPLIT_SYNAPSE_CORS + "\n", ""),
-     f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'"),
+    ("Matrix echoes any Origin", "caddy", _first("header @web_origin Access-Control-Allow-Origin", "header Access-Control-Allow-Origin"),
+     "must grant Matrix CORS only to an exact web origin"),
+    ("Matrix omits Vary on denied origins", "caddy", _first("header +Vary Origin", "header @web_origin +Vary Origin"),
+     "must grant Matrix CORS only to an exact web origin"),
+    ("Synapse keeps granting every origin", "caddy", _last("\t\t\t" + SPLIT_STRIP_CORS + "\n", ""),
+     f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_STRIP_CORS}'"),
     ("Synapse keeps exposing its Server banner", "caddy", _first("\t\t\t" + SYNAPSE_STRIP_SERVER + "\n", ""),
      f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SYNAPSE_STRIP_SERVER}'"),
     ("Synapse keeps exposing Server in Access-Control-Expose-Headers", "caddy", _first("\t\t\t" + SYNAPSE_STRIP_EXPOSED_SERVER + "\n", ""),
@@ -4072,7 +4172,7 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "Caddyfile.split response headers differ from the reviewed set"),
     ("split origin drops Server header suppression", "caddy", _first("\t\t-Server\n", ""),
      "Caddyfile.split response headers differ from the reviewed set"),
-    ("Synapse grants a wildcard origin", "caddy", _first(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"'),
+    ("Synapse grants a wildcard origin", "caddy", _last(SPLIT_STRIP_CORS, 'header_down Access-Control-Allow-Origin "*"'),
      "Caddyfile.split has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'"),
     ("the API is answered on the signalling origin", "caddy", _first("reverse_proxy livekit:7880 {", "reverse_proxy api-admission:8080 {"),
      "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' proxies to 'api-admission:8080', which is not reviewed for that site"),
@@ -4098,9 +4198,9 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
     ("Caddy cannot name the API origin", "override", _first("      KODERA_MATRIX_DOMAIN: ", "      KODERA_MATRIX_DOMAIN_UNUSED: "),
      "docker-compose.split.yml must set KODERA_MATRIX_DOMAIN on service 'caddy'"),
     ("the API admits every origin", "override", _first("KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?", "KODERA_CONSOLE_ORIGINS: '*'${KODERA_DOMAIN:?"),
-     "docker-compose.split.yml must set KODERA_CONSOLE_ORIGINS on service 'server' to https://${KODERA_DOMAIN:?..."),
+     "docker-compose.split.yml must set KODERA_CONSOLE_ORIGINS on service 'server' to https://${KODERA_DOMAIN:?"),
     ("room-access hands out the single-origin signalling URL", "override", _first("wss://livekit.${KODERA_DOMAIN", "wss://${KODERA_DOMAIN"),
-     "docker-compose.split.yml must set LIVEKIT_WS_URL on service 'room-access' to wss://livekit.${KODERA_DOMAIN:?..."),
+     "docker-compose.split.yml must set LIVEKIT_WS_URL on service 'room-access' to wss://livekit.${KODERA_DOMAIN:?"),
     ("Synapse is not told it runs split", "override", _first(f"      {COMPOSE_TOPOLOGY_ENV_NAME}: split\n", ""),
      f"docker-compose.split.yml must set {COMPOSE_TOPOLOGY_ENV_NAME} on service 'synapse'"),
     ("a LiveKit secret reaches the server", "override",
@@ -4886,7 +4986,7 @@ def main() -> int:
         except UnicodeDecodeError:
             print("[FAIL] .env is not UTF-8 text", file=sys.stderr)
             return 1
-        errors += [f".env: {err}" for err in preflight_env(env_text, operator_env)]
+        errors += [f".env: {err}" for err in preflight_env(env_text, operator_env, shell_environment=os.environ)]
     else:
         errors += check_generator_and_allowed_hosts(texts["kodera_deploy.py"], texts["test_deploy_allowed_hosts.py"])
         errors += check_media_worker_startup()

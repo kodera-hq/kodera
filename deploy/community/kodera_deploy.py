@@ -110,6 +110,11 @@ def generate(args):
                   KODERA_MATRIX_DOMAIN=matrix_domain,
                   DJANGO_ALLOWED_HOSTS=allowed_hosts, KODERA_TOPOLOGY=topology, KODERA_OIDC_PROVIDER_ORIGIN=origin,
                   KODERA_AUTH_TRUST="'"+trust_json+"'")
+    app_origin = getattr(args, 'app_origin', None)
+    if app_origin:
+        from configure_synapse import validate_app_origin
+        validate_app_origin(app_origin, topology == 'split')
+        values['KODERA_APP_ORIGIN'] = app_origin
     staff = getattr(args, 'staff_issuer', None)
     values['KODERA_STAFF_ISSUER'] = https(staff) if staff else ''
     if staff and (not staff.endswith('/realms/kodera-staff') or not any(
@@ -256,7 +261,7 @@ def selftest():
     assert split_homeserver['public_baseurl'] == 'https://matrix.community.example.org/'
     split_signed = configure({'server_name': 'community.example.org'}, dict(community_environment, KODERA_DEFAULT_COMMUNITY_ISSUER='https://id.example.org/realms/community', **split_environment))
     assert split_signed['public_baseurl'] == 'https://matrix.community.example.org/'
-    assert split_signed['sso']['client_whitelist'] == ['https://community.example.org/']
+    assert split_signed['sso']['client_whitelist'] == ['https://community.example.org/espace/callback']
     for values in ({'KODERA_TOPOLOGY': 'split'}, {'KODERA_COMPOSE_TOPOLOGY': 'split'}, {'KODERA_TOPOLOGY': 'both', 'KODERA_COMPOSE_TOPOLOGY': 'both'}):
         try:
             configure({'server_name': 'community.example.org'}, values)
@@ -336,7 +341,10 @@ def selftest():
         assert 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n' in community_split
         assert not check.preflight_env(TEMPLATE.read_text(), community_split)
         assert check.preflight_env(TEMPLATE.read_text(), community_split.replace('DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n', 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n'))
-        for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org')):
+        app_split = generate(args(topology='split', app_origin='https://app.example.org')).read_text()
+        assert 'KODERA_APP_ORIGIN=https://app.example.org\n' in app_split
+        for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org'),
+                        dict(topology='split', app_origin='https://app.example.net')):
             try:
                 generate(args(**changes))
             except ValueError:
@@ -381,6 +389,8 @@ def main():
     parser.add_argument('--template', choices=(*WORKSPACE_TEMPLATES, *TEMPLATE_ALIASES))
     parser.add_argument('--topology', choices=TOPOLOGIES, default='single',
                         help='single: one origin serves everything (default); split: backends only, web client hosted elsewhere')
+    parser.add_argument('--app-origin', default=os.environ.get('KODERA_APP_ORIGIN'),
+                        help='Optional second HTTPS web origin on a subdomain of the Matrix domain for the split topology')
     parser.add_argument('--generate-only', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--selftest', action='store_true')
@@ -400,8 +410,11 @@ def main():
         if args.topology == 'split':
             written = check.parse_env_example(target.read_text())[0]
             origins = split_origins(written['KODERA_DOMAIN'], written['KODERA_MATRIX_DOMAIN'])
+            web_origins = [origins['web']]
+            if written.get('KODERA_APP_ORIGIN'):
+                web_origins.append(written['KODERA_APP_ORIGIN'])
             print('Split topology: this stack serves ' + ', '.join(origins[name] for name in ('api', 'matrix', 'livekit'))
-                  + '. Host the web client at ' + origins['web'] + ', with /.well-known/matrix/client naming ' + origins['matrix'] + '.')
+                  + '. Host the web client at ' + ' and '.join(web_origins) + ', with /.well-known/matrix/client naming ' + origins['matrix'] + '.')
         template_id = TEMPLATE_ALIASES.get(args.template, args.template)
         print(compose_command(target.resolve(), template_id, args.topology))
         return 0

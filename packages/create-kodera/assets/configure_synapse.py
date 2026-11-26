@@ -85,6 +85,17 @@ def topology(environment):
     return chosen
 
 
+def validate_app_origin(origin, split):
+    if not origin:
+        return
+    if not split:
+        raise ValueError("KODERA_APP_ORIGIN requires the split topology")
+    host = origin.removeprefix("https://")
+    if (host == origin or len(host) > 253 or not re.fullmatch(PUBLIC_DOMAIN, host)
+            or any(len(label) > 63 for label in host.split(".")) or host.endswith(PRIVATE_SUFFIXES)):
+        raise ValueError("KODERA_APP_ORIGIN must be an exact public HTTPS origin")
+
+
 def federation_allowlist(environment):
     """The servers federation is opened to. Empty, the default, keeps federation closed."""
     names = [name.strip() for name in environment.get("KODERA_MATRIX_FEDERATION_ALLOWLIST", "").split(",")]
@@ -137,6 +148,8 @@ def configure(document, environment=None):
     server = document["server_name"]
     community = bool(environment.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG"))
     split = topology(environment) == "split"
+    app_origin = environment.get("KODERA_APP_ORIGIN", "")
+    validate_app_origin(app_origin, split)
     issuer = oidc_issuer(environment)
     allowlist = federation_allowlist(environment)
     mode = federation_mode(environment, allowlist)
@@ -184,6 +197,7 @@ def configure(document, environment=None):
     document["ip_range_whitelist"] = []
     document["allow_public_rooms_over_federation"] = False
     document["allow_public_rooms_without_auth"] = False
+    document["user_directory"] = dict(document.get("user_directory") or {}, search_all_users=False)
     if not allowlist:
         document["trusted_key_servers"] = []
         document["suppress_key_server_warning"] = True
@@ -218,7 +232,7 @@ def configure(document, environment=None):
     document["require_auth_for_profile_requests"] = True
 
     # The split topology publishes the client API on its own origin; the web client, where the
-    # login token returns, stays at https://<server_name>/. A return to single drops that URL.
+    # login token returns, keeps its own callback. A return to single drops the Matrix URL.
     split_baseurl = f"https://matrix.{server}/"
     if split:
         document["public_baseurl"] = split_baseurl
@@ -246,8 +260,13 @@ def configure(document, environment=None):
                 "confirm_localpart": False,
             }},
         }]
-        # Synapse matches by prefix: without the trailing slash a look-alike origin gets the token.
-        document["sso"]["client_whitelist"] = [f"https://{server}/"]
+    # Synapse matches prefixes. Rewrite existing grants too, so disabling the app
+    # origin revokes it on a persistent volume, even if OIDC is also deconfigured.
+    if issuer or "client_whitelist" in document["sso"]:
+        callbacks = [f"https://{server}/espace/callback"]
+        if app_origin:
+            callbacks.append(app_origin + "/espace/callback")
+        document["sso"]["client_whitelist"] = callbacks
     return document
 
 

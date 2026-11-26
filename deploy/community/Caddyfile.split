@@ -101,20 +101,25 @@ matrix.{$KODERA_DOMAIN} {
 		}
 	}
 
-	# Synapse answers every origin with `Access-Control-Allow-Origin: *`; here the grant names the
-	# web origin only, Synapse's `Server` version banner is stripped from headers and CORS exposure,
+	# Replace Synapse CORS on both the scope check and the client response.
+	# The optional matcher argument disappears when the app origin is unset.
+	# Synapse's `Server` version banner is stripped from headers and CORS exposure,
 	# and legacy unauthenticated /_matrix/media/*/download/* and /thumbnail/* routes fall through to 404.
 	@matrix path /_matrix/client/* /_matrix/media/v3/upload /_matrix/media/v3/upload/* /_matrix/media/v1/create /_matrix/media/v3/config /_synapse/client/*
 	handle @matrix {
+		@web_origin vars {http.request.header.Origin} https://{$KODERA_DOMAIN} {$KODERA_APP_ORIGIN}
+		header @web_origin Access-Control-Allow-Origin {http.request.header.Origin}
+		header +Vary Origin
 		forward_auth synapse:8008 {
 			uri /_synapse/client/kodera/v1/request_scope
 			header_up X-Original-URI {uri}
 			header_up X-Original-Method {method}
 			import client_address
+			header_down -Access-Control-Allow-Origin
 		}
 		reverse_proxy synapse:8008 {
 			import client_address
-			header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"
+			header_down -Access-Control-Allow-Origin
 			header_down -Server
 			header_down Access-Control-Expose-Headers "(?i)(?:,\s*server(\s*,|$)|^\s*server\s*,\s*|^\s*server\s*$)" "$1"
 		}
