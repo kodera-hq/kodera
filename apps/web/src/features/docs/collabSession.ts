@@ -188,6 +188,58 @@ export function buildDocsOfflineDatabaseName(scopeKey: string, documentId: strin
   return `${DOCS_COLLAB_DATABASE_PREFIX}${safeScope}:${safeDoc}`
 }
 
+// Only a hydrated, released cache may receive a clean marker. Legacy caches have none.
+function cacheMarker(dbName: string): string {
+  return `${DOCS_COLLAB_REGISTRY_KEY}.${dbName}`
+}
+
+// The ownership token invalidates an older controller's clean decision on reopen.
+// Overlapping controllers can have different views of the same IndexedDB journal.
+function registerCacheWriter(dbName: string): (clean: boolean) => void {
+  const key = cacheMarker(dbName)
+  const owner = crypto.randomUUID()
+  let exclusive = false
+  let release: (() => void) | undefined
+  try {
+    localStorage.setItem(key, owner)
+    if (navigator.locks) {
+      // Probe before queueing our shared lifetime lock. A subsequent opener sees
+      // the lock, including in another tab. The browser releases it on tab exit.
+      void navigator.locks.request(key, { ifAvailable: true }, (lock) => {
+        exclusive = lock !== null
+      }).catch(() => { exclusive = false })
+      const lifetime = new Promise<void>((resolve) => { release = resolve })
+      void navigator.locks.request(key, { mode: 'shared' }, () => lifetime).catch(() => {
+        exclusive = false
+      })
+    } else {
+      const prefix = `${key}/`
+      const pin = prefix + owner
+      localStorage.setItem(pin, 'active')
+      exclusive = !Object.keys(localStorage).some((name) => name !== pin && name.startsWith(prefix))
+      release = () => localStorage.removeItem(pin)
+    }
+  } catch {
+    exclusive = false
+  }
+  return (clean) => {
+    try {
+      if (localStorage.getItem(key) === owner) {
+        if (clean && exclusive) localStorage.setItem(key, 'clean')
+        else localStorage.removeItem(key)
+      }
+    } catch {
+      // Unverified caches remain ineligible.
+    } finally {
+      try {
+        release?.()
+      } catch {
+        // Storage may have become restricted.
+      }
+    }
+  }
+}
+
 export function recordDocsOfflineDatabase(dbName: string): void {
   if (!dbName.startsWith(DOCS_COLLAB_DATABASE_PREFIX)) return
   try {
@@ -203,14 +255,14 @@ export function recordDocsOfflineDatabase(dbName: string): void {
       : []
     const next = [...existing, dbName]
     while (next.length > MAX_REGISTERED_DATABASES) {
-      const evicted = next.shift()
-      if (evicted) {
-        try {
-          globalThis.indexedDB?.deleteDatabase(evicted)
-        } catch {
-          // Best-effort eviction.
-        }
-      }
+      const index = next.findIndex((name) =>
+        name !== dbName && window.localStorage.getItem(cacheMarker(name)) === 'clean'
+      )
+      if (index < 0) break
+      const evicted = next[index]!
+      globalThis.indexedDB.deleteDatabase(evicted)
+      window.localStorage.removeItem(cacheMarker(evicted))
+      next.splice(index, 1)
     }
     window.localStorage.setItem(DOCS_COLLAB_REGISTRY_KEY, JSON.stringify(next))
   } catch {
@@ -223,6 +275,10 @@ export function purgeProtectedDocsOfflineDatabases(scopeKey: string, documentId:
   const toDelete = new Set<string>([targetDb])
 
   try {
+    const marker = cacheMarker(targetDb)
+    for (const key of Object.keys(globalThis.localStorage)) {
+      if (key === marker || key.startsWith(`${marker}/`)) globalThis.localStorage.removeItem(key)
+    }
     const raw = globalThis.localStorage?.getItem(DOCS_COLLAB_REGISTRY_KEY)
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
@@ -378,6 +434,8 @@ export class CollabSessionController {
   private socketJournalCount = 0
   private uncompactedUpdates = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private serverDoc: Y.Doc | null = null
+  private releaseCacheWriter: ((clean: boolean) => void) | undefined
   private persistence: IndexeddbPersistence | null = null
   private unregisterLogoutCleanup: (() => void) | null = null
   private unregisterDocsCleanup: (() => void) | null = null
@@ -456,9 +514,11 @@ export class CollabSessionController {
   private setupOfflinePersistence(): void {
     try {
       const dbName = buildDocsOfflineDatabaseName(this.scopeKey, this.documentId)
+      this.releaseCacheWriter = registerCacheWriter(dbName)
       recordDocsOfflineDatabase(dbName)
       const persistence = new IndexeddbPersistence(dbName, this.ydoc)
       this.persistence = persistence
+      this.serverDoc = new Y.Doc()
       persistence.on('synced', () => {
         if (this.destroyed) return
         this.offlineSynced = true
@@ -467,6 +527,8 @@ export class CollabSessionController {
       const closePersistence = () => {
         try {
           void persistence.destroy()
+          this.releaseCacheWriter?.(false)
+          this.releaseCacheWriter = undefined
         } catch {
           // Ignore teardown errors during logout or principal switch.
         }
@@ -474,6 +536,8 @@ export class CollabSessionController {
       this.unregisterLogoutCleanup = registerLocalSessionCleanup(closePersistence)
       this.unregisterDocsCleanup = registerDocsCollabCleanup(closePersistence)
     } catch {
+      this.releaseCacheWriter?.(false)
+      this.releaseCacheWriter = undefined
       // IndexedDB unavailable or blocked; continue in-memory + WebSocket sync cleanly.
     }
   }
@@ -718,6 +782,10 @@ export class CollabSessionController {
       this.unregisterDocsCleanup()
       this.unregisterDocsCleanup = null
     }
+    this.releaseCacheWriter?.(false)
+    this.releaseCacheWriter = undefined
+    this.serverDoc?.destroy()
+    this.serverDoc = null
     if (this.persistence) {
       try {
         void this.persistence.destroy()
@@ -851,6 +919,7 @@ export class CollabSessionController {
               (highest !== undefined && header.sequence <= highest)
             ) {
               if (header.kind === 0) {
+                this.refreshedAfter4401 = false
                 this.transitionStatus('synced')
                 if (
                   this.role === 'editor' &&
@@ -981,7 +1050,6 @@ export class CollabSessionController {
         return
       }
       this.reconnectAttempt = 0
-      this.refreshedAfter4401 = false
       try {
         // First frame carries the short-lived session ticket — never in URL query or logs.
         socket.send(JSON.stringify({ type: 'auth', token: grant.token }))
@@ -1029,6 +1097,7 @@ export class CollabSessionController {
           this.refreshedAfter4401 = true
           void this.connect()
         } else {
+          this.clearReconnectTimer()
           this.transitionStatus('forbidden')
         }
         return
@@ -1070,10 +1139,10 @@ export class CollabSessionController {
             }
           }
         } else if (syncKind === syncProtocol.messageYjsSyncStep2) {
-          syncProtocol.readSyncStep2(decoder, this.ydoc, REMOTE_SYNC_ORIGIN)
+          this.applyServerUpdate(decoder)
           this.transitionStatus('synced')
         } else if (syncKind === syncProtocol.messageYjsUpdate) {
-          syncProtocol.readUpdate(decoder, this.ydoc, REMOTE_SYNC_ORIGIN)
+          this.applyServerUpdate(decoder)
         }
       } else if (messageType === MSG_AWARENESS) {
         const update = decoding.readVarUint8Array(decoder)
@@ -1082,6 +1151,13 @@ export class CollabSessionController {
     } catch {
       // Malformed binary frame ignored safely.
     }
+  }
+
+  private applyServerUpdate(decoder: decoding.Decoder): void {
+    const update = decoding.readVarUint8Array(decoder)
+    Y.applyUpdate(this.ydoc, update, REMOTE_SYNC_ORIGIN)
+    if (this.serverDoc) Y.applyUpdate(this.serverDoc, update, REMOTE_SYNC_ORIGIN)
+    this.refreshedAfter4401 = false
   }
 
   private scheduleReconnect(): void {
@@ -1145,6 +1221,21 @@ export class CollabSessionController {
         // Ignore IDB destroy errors.
       }
       this.persistence = null
+    }
+    this.unregisterDocsCleanup?.()
+    this.unregisterDocsCleanup = null
+    if (this.serverDoc) {
+      // State vectors alone cannot confirm deletion-only edits. Compare both the
+      // clocks and delete sets against updates actually received from the relay.
+      this.releaseCacheWriter?.(
+        this.offlineSynced &&
+        this.ydoc.store.pendingStructs === null &&
+        this.ydoc.store.pendingDs === null &&
+        Y.equalSnapshots(Y.snapshot(this.serverDoc), Y.snapshot(this.ydoc))
+      )
+      this.releaseCacheWriter = undefined
+      this.serverDoc.destroy()
+      this.serverDoc = null
     }
     this.status = 'closed'
     this.listeners.clear()

@@ -17,6 +17,32 @@ import {
   type WebSocketLike,
 } from './collabSession'
 
+// Persist real Yjs updates across controller lifetimes. Deleting a database removes
+// its updates, just as eviction would in a browser.
+const offlineUpdates = new Map<string, Uint8Array[]>()
+vi.mock('y-indexeddb', () => ({
+  IndexeddbPersistence: class {
+    constructor(private name: string, private doc: Y.Doc) {
+      this.doc.on('update', this.store)
+    }
+    private store = (update: Uint8Array, origin: unknown) => {
+      if (origin === this) return
+      const updates = offlineUpdates.get(this.name) ?? []
+      updates.push(update)
+      offlineUpdates.set(this.name, updates)
+    }
+    on(_event: 'synced', callback: () => void) {
+      for (const update of offlineUpdates.get(this.name) ?? []) {
+        Y.applyUpdate(this.doc, update, this)
+      }
+      callback()
+    }
+    destroy() {
+      this.doc.off('update', this.store)
+    }
+  },
+}))
+
 /** The server's state answer (sync step 2), the frame that makes a session `synced`. */
 function serverState(): Uint8Array {
   const encoder = encoding.createEncoder()
@@ -81,6 +107,8 @@ class InMemoryCollabRelay {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals()
+  offlineUpdates.clear()
   vi.useRealTimers()
   window.localStorage.clear()
 })
@@ -299,6 +327,99 @@ describe('CollabSessionController and Yjs transport rules', () => {
     sockets[2]?.close(4403, 'forbidden')
     expect(ctrl.getSnapshot().status).toBe('forbidden')
 
+    ctrl.destroy()
+  })
+
+  it('preserves a released offline edit until the server confirms it', async () => {
+    const deleteDatabase = vi.fn((name: string) => offlineUpdates.delete(name))
+    vi.stubGlobal('indexedDB', { open: vi.fn(), deleteDatabase })
+    const sockets: MockCollabSocket[] = []
+    const makeSession = (documentId: string) => new CollabSessionController({
+      documentId, scopeKey: 'org', user: { id: 'editor', name: 'Editor' },
+      fetchSession: async () => ({
+        wsUrl: 'wss://example.test/collab', token: 'ticket', role: 'editor', expiresAt: '',
+      }),
+      webSocketFactory: () => {
+        const socket = new MockCollabSocket(() => undefined)
+        sockets.push(socket)
+        return socket
+      },
+    })
+    const churn = (prefix: string) => {
+      for (let i = 0; i < 65; i++) makeSession(prefix + i).destroy()
+    }
+    const name = buildDocsOfflineDatabaseName('org', 'draft')
+    const draft = makeSession('draft')
+    await draft.connect()
+    sockets[0]!.open()
+    sockets[0]!.receive(serverState())
+    sockets[0]!.close(1006)
+    draft.ydoc.getText('body').insert(0, 'Offline-only edit')
+    draft.destroy()
+    churn('clean')
+    expect(deleteDatabase).toHaveBeenCalled()
+    expect(deleteDatabase).not.toHaveBeenCalledWith(name)
+
+    const reopened = makeSession('draft')
+    expect(reopened.ydoc.getText('body').toString()).toBe('Offline-only edit')
+    await reopened.connect()
+    sockets[1]!.open()
+    sockets[1]!.receive(serverState())
+    expect(reopened.getSnapshot().status).toBe('synced')
+    reopened.destroy()
+    churn('before-ack')
+    expect(deleteDatabase).not.toHaveBeenCalledWith(name)
+
+    const finalSession = makeSession('draft')
+    await finalSession.connect()
+    const socket = sockets[2]!
+    socket.open()
+    socket.receive(serverState())
+    const server = new Y.Doc()
+    const encoder = encoding.createEncoder()
+    encoding.writeVarUint(encoder, MSG_SYNC)
+    syncProtocol.writeSyncStep1(encoder, server)
+    socket.receive(encoding.toUint8Array(encoder))
+    const reply = decoding.createDecoder(socket.sentFrames.at(-1) as Uint8Array)
+    expect(decoding.readVarUint(reply)).toBe(MSG_SYNC)
+    expect(decoding.readVarUint(reply)).toBe(syncProtocol.messageYjsSyncStep2)
+    const committed = decoding.readVarUint8Array(reply)
+    Y.applyUpdate(server, committed)
+    expect(server.getText('body').toString()).toBe('Offline-only edit')
+    const echo = encoding.createEncoder()
+    encoding.writeVarUint(echo, MSG_SYNC)
+    syncProtocol.writeUpdate(echo, committed)
+    socket.receive(encoding.toUint8Array(echo))
+    finalSession.destroy()
+    churn('after-ack')
+    expect(deleteDatabase).toHaveBeenCalledWith(name)
+    server.destroy()
+  })
+
+  it('stops after the refreshed socket opens and rejects its ticket before sync', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const sockets: MockCollabSocket[] = []
+    const fetchSession = vi.fn(async () => ({
+      wsUrl: 'wss://example.test/collab', token: 'ticket', role: 'editor' as const, expiresAt: '',
+    }))
+    const ctrl = new CollabSessionController({
+      documentId: 'revoked', scopeKey: 'org', user: { id: 'editor', name: 'Editor' },
+      enableOfflineBuffer: false, fetchSession,
+      webSocketFactory: () => {
+        const socket = new MockCollabSocket(() => undefined)
+        sockets.push(socket)
+        return socket
+      },
+    })
+    await ctrl.connect()
+    sockets[0]!.open()
+    sockets[0]!.close(4401)
+    await Promise.resolve()
+    sockets[1]!.open()
+    sockets[1]!.close(4401)
+    expect(ctrl.getSnapshot().status).toBe('forbidden')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(fetchSession).toHaveBeenCalledTimes(2)
     ctrl.destroy()
   })
 
