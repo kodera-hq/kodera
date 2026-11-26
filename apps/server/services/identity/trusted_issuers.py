@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from .access_tokens import (
+    AUDIENCE,
     IssuerKeySnapshot,
     TokenVerificationError,
     VerifiedAccessToken,
@@ -42,6 +43,7 @@ class TrustedIssuer:
     # token whose `azp` is missing or not listed is refused (`verify_configured_token`). Empty on
     # the staff lane, where `azp` is not judged here.
     allowed_azp: tuple[str, ...] = ()
+    audience: str = AUDIENCE
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -74,14 +76,19 @@ def load_trust(
         if not isinstance(entries, list) or len(entries) > MAX_ISSUERS:
             raise ValueError("public configuration entries")
         admitted: list[TrustedIssuer] = []
-        issuers: set[str] = set()
+        issuers: set[tuple[str, str]] = set()
         for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != ENTRY_FIELDS:
+            if not isinstance(entry, dict) or set(entry) - {"audience"} != ENTRY_FIELDS:
                 raise ValueError("public configuration entry shape")
             lane, issuer = entry["lane"], entry["issuer"]
             if not isinstance(lane, str) or lane not in {"customer", "staff"}:
                 raise ValueError("public configuration lane")
-            if not isinstance(issuer, str) or issuer in issuers:
+            audience = entry.get("audience", AUDIENCE)
+            if (
+                not isinstance(issuer, str)
+                or not isinstance(audience, str)
+                or (issuer, audience) in issuers
+            ):
                 raise ValueError("public configuration issuer")
             if not isinstance(entry["generation"], str) or type(entry["expires_at"]) is not int:
                 raise ValueError("public configuration primitive")
@@ -94,13 +101,15 @@ def load_trust(
                 issuer=issuer,
                 generation=entry["generation"],
                 expires_at=entry["expires_at"],
+                expected_audience=audience,
             )
-            issuers.add(issuer)
+            issuers.add((issuer, audience))
             admitted.append(
                 TrustedIssuer(
                     cast(Lane, lane),
                     snapshot,
                     tuple(allowed_azp) if lane == "customer" else (),
+                    audience,
                 )
             )
         return tuple(admitted)
@@ -120,10 +129,42 @@ def verify_configured_token(
         if entry.snapshot.issuer != issuer:
             continue
         try:
-            verified = verify_access_token(compact, admitted=entry.snapshot)
+            if entry.audience == AUDIENCE:
+                verified = verify_access_token(compact, admitted=entry.snapshot)
+            else:
+                verified = verify_access_token(
+                    compact, admitted=entry.snapshot, expected_audience=entry.audience
+                )
         except TokenVerificationError:
             continue
         if entry.lane == "customer" and verified.authorized_party not in entry.allowed_azp:
+            raise TokenVerificationError()
+        return verified, entry.lane
+    raise TokenVerificationError()
+
+
+def verify_organisation_token(
+    compact: str,
+    *,
+    trusted: tuple[TrustedIssuer, ...],
+    expected_issuer: str,
+    expected_audience: str,
+) -> tuple[VerifiedAccessToken, Lane]:
+    """Select keys by per-organisation (issuer, oidc_audience) pinning before verification."""
+    for entry in trusted:
+        if (
+            entry.lane != "customer"
+            or entry.snapshot.issuer != expected_issuer
+            or entry.audience != expected_audience
+        ):
+            continue
+        try:
+            verified = verify_access_token(
+                compact, admitted=entry.snapshot, expected_audience=expected_audience
+            )
+        except TokenVerificationError:
+            continue
+        if verified.authorized_party not in entry.allowed_azp:
             raise TokenVerificationError()
         return verified, entry.lane
     raise TokenVerificationError()

@@ -1052,6 +1052,7 @@ EXECUTE_FUNCTIONS = (
     "billing_issue_boost_invoice(uuid, text, integer, jsonb, jsonb, text, integer, bigint, timestamp with time zone, timestamp with time zone)",
     "billing_issue_boost_refund_credit_note(uuid, text, bigint, bigint)",
     "billing_issue_draft_invoice(uuid, uuid, text, integer)",
+    "billing_issue_invoice_refund_credit_note(uuid, text, bigint)",
 )
 
 

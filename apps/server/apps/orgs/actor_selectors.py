@@ -60,6 +60,20 @@ def read_tenant_caller(
             raise TenantCallerNotFoundError()
         principal, membership = shared
         shared_organisation = membership.organisation
+        if shared_organisation.issuer == verified.issuer:
+            if shared_organisation.oidc_audience not in verified.audience:
+                raise TenantCallerNotFoundError()
+        elif (
+            principal.organisation_id is not None
+            and principal.organisation_id != shared_organisation.id
+        ):
+            if not Organisation.objects.filter(
+                id=principal.organisation_id,
+                issuer=verified.issuer,
+                oidc_audience__in=verified.audience,
+                deleted_at__isnull=True,
+            ).exists():
+                raise TenantCallerNotFoundError()
         return TenantCaller(
             organisation_id=shared_organisation.id,
             organisation_state=shared_organisation.state,
@@ -82,13 +96,15 @@ def read_tenant_caller(
         organisation_id=organisation_id,
         issuer=identity.issuer,
         realm=identity.realm,
+        audience=verified.audience,
     ):
         raise TenantCallerNotFoundError()
     member = current_membership(user_id=person.id, organisation_id=organisation_id)
     organisation = (
         Organisation.objects.filter(
             id=organisation_id,
-            issuer=identity.issuer,
+            issuer=verified.issuer,
+            oidc_audience__in=verified.audience,
             realm=identity.realm,
             deleted_at__isnull=True,
         )

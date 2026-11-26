@@ -29,7 +29,7 @@ from apps.orgs.authority_selectors import (
     MemberAuthorityUnavailableError,
     resolve_all_member_authorities,
 )
-from apps.orgs.models import Membership
+from apps.orgs.models import Membership, Organisation
 from django.conf import settings
 from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest
@@ -41,8 +41,12 @@ from services.identity.access_tokens import (
     MAX_TOKEN,
     TokenVerificationError,
     VerifiedAccessToken,
+    valid_audience,
 )
-from services.identity.trusted_issuers import TrustedIssuer, verify_configured_token
+from services.identity.trusted_issuers import (
+    TrustedIssuer,
+    verify_configured_token,
+)
 
 ADMIN_ROLES: Final[frozenset[str]] = frozenset({Membership.Role.OWNER, Membership.Role.ADMIN})
 OWNER_ROLES: Final[frozenset[str]] = frozenset({Membership.Role.OWNER})
@@ -63,6 +67,14 @@ def issue_ee_saml_session_token(
     ttl_seconds: int = EE_SAML_SESSION_TTL_SECONDS,
 ) -> str:
     """Issue a short-lived HMAC-SHA256 customer Bearer token after SAML->OIDC handoff burn."""
+    audience = AUDIENCE
+    if can_use_postgres():
+        organisation = Organisation.objects.filter(
+            id=organisation_id, issuer=issuer, slug=tenant_slug, deleted_at__isnull=True
+        ).first()
+        if organisation is None or not valid_audience(organisation.oidc_audience):
+            raise TokenVerificationError()
+        audience = organisation.oidc_audience
     issued_at = int(time.time()) if now is None else int(now)
     expires_at = issued_at + ttl_seconds
     payload = {
@@ -72,7 +84,7 @@ def issue_ee_saml_session_token(
         "uid": str(user_id),
         "org": str(organisation_id),
         "slug": tenant_slug,
-        "aud": AUDIENCE,
+        "aud": audience,
         "azp": "console",
         "iat": issued_at,
         "exp": expires_at,
@@ -141,11 +153,25 @@ def verify_ee_saml_session_token(
         or not iss
         or not isinstance(sub, str)
         or not is_storable_subject(sub)
-        or aud != AUDIENCE
+        or not isinstance(aud, str)
+        or not valid_audience(aud)
         or azp != "console"
         or type(iat) is not int
         or type(exp) is not int
     ):
+        raise TokenVerificationError()
+
+    try:
+        organisation_id = UUID(claims.get("org", ""))
+    except (ValueError, TypeError, AttributeError):
+        raise TokenVerificationError() from None
+    if not Organisation.objects.filter(
+        id=organisation_id,
+        issuer=iss,
+        slug=claims.get("slug"),
+        oidc_audience=aud,
+        deleted_at__isnull=True,
+    ).exists():
         raise TokenVerificationError()
 
     now_epoch = int(time.time()) if now is None else int(now)
@@ -155,7 +181,7 @@ def verify_ee_saml_session_token(
     return VerifiedAccessToken(
         issuer=iss,
         subject=sub,
-        audience=(AUDIENCE,),
+        audience=(aud,),
         issued_at=iat,
         expires_at=exp,
         not_before=None,

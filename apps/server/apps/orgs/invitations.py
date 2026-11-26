@@ -1005,6 +1005,7 @@ def _redeemable(*, verified: VerifiedAccessToken, lane: str, token: str, lock: b
     if (
         organisation is None
         or organisation.issuer != verified.issuer
+        or organisation.oidc_audience not in verified.audience
         or not hmac.compare_digest(bytes(invitation.token_digest), digest(secret))
     ):
         raise InvitationNotFoundError()
@@ -1194,7 +1195,11 @@ def verify_accept_replay_authority(
     organisation = Organisation.objects.filter(
         id=invitation.organisation_id, deleted_at__isnull=True
     ).first()
-    if organisation is None or organisation.issuer != verified.issuer:
+    if (
+        organisation is None
+        or organisation.issuer != verified.issuer
+        or organisation.oidc_audience not in verified.audience
+    ):
         raise InvitationNotFoundError()
     if organisation.state != "active":
         raise InvitationStateError()

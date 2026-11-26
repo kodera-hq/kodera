@@ -1,12 +1,13 @@
 """Read-only accounting series verification; no renumbering or repair is permitted."""
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .configuration import SERIES
+from .configuration import CREDIT_NOTE_SERIES, SERIES
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -21,6 +22,19 @@ class NumberedRecord:
     issued_at: datetime
 
 
+def is_credit_note_number(number: str) -> bool:
+    try:
+        series, year, suffix = number.rsplit("-", 2)
+    except ValueError:
+        return False
+    return bool(
+        CREDIT_NOTE_SERIES.fullmatch(series)
+        and re.fullmatch(r"[0-9]{4}", year)
+        and re.fullmatch(r"[0-9]{5}", suffix)
+        and 1 <= int(suffix) <= 99_999
+    )
+
+
 def verify_series(records: Iterable[NumberedRecord], counters: dict[tuple[str, int], int]) -> None:
     """Verify both invoice and AV series, including missing first/last numbers and empty series.
 
@@ -31,10 +45,19 @@ def verify_series(records: Iterable[NumberedRecord], counters: dict[tuple[str, i
     for row in records:
         try:
             series, year_text, suffix = row.number.rsplit("-", 2)
-            base = series.removeprefix("AV-")
+            base = (
+                (
+                    series.removeprefix("AV-")
+                    if series.startswith("AV-")
+                    else series.removesuffix("-AV")
+                )
+                if is_credit_note_number(row.number)
+                else series
+            )
             if (
                 not SERIES.fullmatch(base)
                 or base.startswith("AV")
+                or base.endswith("-AV")
                 or len(year_text) != 4
                 or not year_text.isascii()
                 or not year_text.isdigit()

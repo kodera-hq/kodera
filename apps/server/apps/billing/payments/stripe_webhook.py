@@ -46,7 +46,7 @@ from ..models import (
     VipMembershipEntitlement,
     WorkspaceBoostGrant,
 )
-from ..services import set_invoice_state
+from ..services import credit_note_series, set_invoice_state
 from ..states import PAYMENT_TRANSITIONS, SUBSCRIPTION_TRANSITIONS
 from .port import ProviderEvent as PortEvent
 from .services import (
@@ -683,6 +683,13 @@ def _apply_g4_refund_to_payment(
     if net_owed > 0:
         _sync_reversed_subscription(invoice=invoice)
 
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT public.billing_issue_invoice_refund_credit_note(%s, %s, %s)",
+            [payment.id, credit_note_series(), amount_refunded],
+        )
+        note_id = cursor.fetchone()[0]
+
     events.record(
         "payment.refunded",
         actor=SYSTEM,
@@ -696,6 +703,9 @@ def _apply_g4_refund_to_payment(
             "invoice_id": str(payment.invoice_id),
             "amount_refunded_minor": amount_refunded,
             "delta_refunded_minor": delta_refunded,
+            "credit_note_status": "issued"
+            if note_id is not None
+            else "credit_note_ceiling_reached",
             "currency": currency,
             "partial": not is_full_refund,
             "invoice_state_before": invoice_state_before,
@@ -846,8 +856,8 @@ def _handle_checkout_completed(
         return "unmatched", None
 
     payment_status = data_obj.get("payment_status")
-    if event_type == "checkout.session.completed":
-        if payment_status == "unpaid":
+    if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        if event_type == "checkout.session.completed" and payment_status == "unpaid":
             return "ignored", link.organisation_id
         if payment_status != "paid":
             events.record(
@@ -988,11 +998,43 @@ def _handle_checkout_async_payment_failed(
 
     _lock_stripe_payment_ref(port_event.payment_ref)
     invoice = Invoice.objects.select_for_update().get(id=link.invoice_id)
-    reconciled = reconcile(provider_name="stripe", event=port_event, drain_deferred=False)
+    existing_payment = (
+        Payment.objects.select_for_update()
+        .filter(provider="stripe", provider_ref=port_event.payment_ref)
+        .first()
+    )
+    mismatch_reason = _validate_bound_metadata(
+        _metadata_of(data_obj),
+        data_obj,
+        invoice=invoice,
+        customer_ref=port_event.customer_ref,
+        payment=existing_payment,
+    )
+    if (port_event.amount_minor, port_event.currency) != (link.amount_minor, link.currency) or (
+        port_event.currency != invoice.currency
+    ):
+        mismatch_reason = "amount_or_currency"
+    if existing_payment is not None and existing_payment.invoice_id != invoice.id:
+        mismatch_reason = "payment_intent_invoice_mismatch"
+    if mismatch_reason is not None:
+        events.record(
+            "payment.reconciliation_mismatch",
+            actor=SYSTEM,
+            organisation_id=invoice.organisation_id,
+            target=("payment", f"stripe:{port_event.payment_ref}"),
+            metadata={
+                "provider": "stripe",
+                "event_id": event_id,
+                "invoice_id": str(invoice.id),
+                "reason": mismatch_reason,
+            },
+        )
+        return "mismatch", invoice.organisation_id
+    outcome = reconcile(provider_name="stripe", event=port_event, drain_deferred=False)
     invoice.refresh_from_db()
-    if effective_owed_minor(invoice) > 0:
+    if outcome == "applied" and effective_owed_minor(invoice) > 0:
         _sync_reversed_subscription(invoice=invoice)
-    return ("applied" if reconciled == "duplicate" else reconciled), invoice.organisation_id
+    return ("applied" if outcome == "duplicate" else outcome), invoice.organisation_id
 
 
 def _handle_checkout_expired(
@@ -1540,12 +1582,24 @@ def _try_handle_h31_checkout_completed(
     if org_id is None:
         return None
     payment_status = data_obj.get("payment_status")
-    if event_type == "checkout.session.completed":
-        if payment_status == "unpaid" or (
-            mkt_org_id is not None and payment_status == "processing"
+    if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        if event_type == "checkout.session.completed" and (
+            payment_status == "unpaid"
+            or (mkt_org_id is not None and payment_status == "processing")
         ):
             return "ignored", org_id
         if payment_status != "paid":
+            events.record(
+                "payment.reconciliation_mismatch",
+                actor=SYSTEM,
+                organisation_id=org_id,
+                target=("payment_link", f"stripe:{session_id}"),
+                metadata={
+                    "provider": "stripe",
+                    "event_id": event_id,
+                    "reason": "checkout_not_paid",
+                },
+            )
             return "mismatch", org_id
 
     raw_pi = data_obj.get("payment_intent")

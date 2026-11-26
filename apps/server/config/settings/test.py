@@ -83,6 +83,7 @@ KODERA_BILLING_ISSUER = Issuer(
     country="FR",
 )
 KODERA_INVOICE_SERIES = "TST"
+KODERA_CREDIT_NOTE_SERIES = "AV-TST"
 KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 
 # Test-only: the fake payment provider and its signing secret, a fixed synthetic value derived from

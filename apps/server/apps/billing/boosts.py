@@ -47,7 +47,12 @@ from .models import (
 from .money import BASIS_POINTS, line_amounts, round_half_up, vat_for_net_minor
 from .payments.port import LinkRequest, PaymentProvider, ProviderLink
 from .payments.services import check_return_url
-from .services import IDEMPOTENCY_KEY, IdempotencyKeyReuseError, set_invoice_state
+from .services import (
+    IDEMPOTENCY_KEY,
+    IdempotencyKeyReuseError,
+    credit_note_series,
+    set_invoice_state,
+)
 from .states import PAYMENT_TRANSITIONS
 from .vat import EU_MEMBER_STATES, Regime, regime_for
 from .vies import current_consultation
@@ -595,7 +600,7 @@ def _issue_boost_refund_credit_note_via_authority(
     delta_net_minor: int,
     delta_vat_minor: int,
 ) -> UUID:
-    series = str(getattr(settings, "KODERA_INVOICE_SERIES", "KODERA"))
+    series = credit_note_series()
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT public.billing_issue_boost_refund_credit_note(%s, %s, %s, %s)",

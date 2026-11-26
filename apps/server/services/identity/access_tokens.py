@@ -89,13 +89,21 @@ class IssuerKeySnapshot:
     generation: str
     expires_at: int
     _keys: tuple[_Key, ...] = field(repr=False)
+    expected_audience: str = AUDIENCE
 
     @classmethod
     def from_jwks(
-        cls, raw: bytes, *, issuer: str, generation: str, expires_at: int
+        cls,
+        raw: bytes,
+        *,
+        issuer: str,
+        generation: str,
+        expires_at: int,
+        expected_audience: str = AUDIENCE,
     ) -> "IssuerKeySnapshot":
         try:
             _require(isinstance(issuer, str) and 0 < len(issuer) <= 2048)
+            _require(valid_audience(expected_audience))
             _require(isinstance(generation, str) and 0 < len(generation) <= 128)
             _require(type(expires_at) is int and expires_at > time.time())
             _require(isinstance(raw, bytes) and len(raw) <= MAX_JWKS)
@@ -145,7 +153,7 @@ class IssuerKeySnapshot:
                     public = ec_key
                 admitted.append(_Key(kid, algorithm, public))
             _require(bool(admitted))
-            return cls(issuer, generation, expires_at, tuple(admitted))
+            return cls(issuer, generation, expires_at, tuple(admitted), expected_audience)
         except (ValueError, TypeError, KeyError, AttributeError, jwt.PyJWTError, RecursionError):
             raise TokenVerificationError() from None
 
@@ -389,11 +397,20 @@ def unverified_issuer(compact: str) -> str:
         raise TokenVerificationError() from None
 
 
-def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> VerifiedAccessToken:
+def valid_audience(value: object) -> bool:
+    """The persisted OIDC audience is nonempty printable ASCII without whitespace."""
+    return isinstance(value, str) and re.fullmatch(r"[!-~]{1,255}", value) is not None
+
+
+def verify_access_token(
+    compact: str, *, admitted: IssuerKeySnapshot, expected_audience: str = AUDIENCE
+) -> VerifiedAccessToken:
     try:
         now = time.time()
         _require(isinstance(compact, str) and len(compact) <= MAX_TOKEN)
         _require(admitted.expires_at > now)
+        _require(valid_audience(expected_audience))
+        _require(expected_audience == admitted.expected_audience)
         parts = compact.split(".")
         _require(len(parts) == 3)
         header, payload = _object(_segment(parts[0])), _object(_segment(parts[1]))
@@ -412,7 +429,7 @@ def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> Verifie
             matching[0].public,
             algorithms=ALGORITHMS,
             issuer=admitted.issuer,
-            audience=AUDIENCE,
+            audience=expected_audience,
             leeway=30,
             options={"require": ["iss", "sub", "aud", "iat", "exp", "typ"]},
         )
@@ -427,7 +444,7 @@ def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> Verifie
             isinstance(audience, list)
             and bool(audience)
             and all(isinstance(item, str) and bool(item) for item in audience)
-            and AUDIENCE in audience
+            and expected_audience in audience
         )
         iat, exp = payload["iat"], payload["exp"]
         _require(type(iat) is int and type(exp) is int and exp > iat)

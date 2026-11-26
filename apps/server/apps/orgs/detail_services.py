@@ -8,6 +8,7 @@ from apps.identity.selectors import current_identity, current_identity_for_organ
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .detail_selectors import OrganisationDetail, organisation_detail
+from .models import Organisation
 from .selectors import has_current_read_grant
 
 
@@ -45,7 +46,15 @@ def read_organisation(*, verified: VerifiedAccessToken, target_id: UUID) -> Orga
             organisation_id=identity.organisation_id,
             issuer=identity.issuer,
             realm=identity.realm,
+            audience=verified.audience,
         ):
+            raise OrganisationReadForbiddenError()
+        if not Organisation.objects.filter(
+            id=target_id,
+            issuer=verified.issuer,
+            oidc_audience__in=verified.audience,
+            deleted_at__isnull=True,
+        ).exists():
             raise OrganisationReadForbiddenError()
         detail = organisation_detail(
             organisation_id=identity.organisation_id, issuer=identity.issuer, realm=identity.realm

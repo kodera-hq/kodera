@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 import config.deploy_environment as _deploy_env
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
+    credit_note_series_from_environment,
     issuer_from_environment as billing_issuer,
     payment_return_origins,
     series_from_environment as billing_series,
@@ -122,6 +123,9 @@ KODERA_TRUSTED_EDGE = trusted_edge(os.environ)
 # The legal entity that issues invoices, and the invoice number series (apps/billing/configuration.py).
 KODERA_BILLING_ISSUER = billing_issuer(os.environ)
 KODERA_INVOICE_SERIES = billing_series(os.environ)
+KODERA_CREDIT_NOTE_SERIES = credit_note_series_from_environment(
+    os.environ, invoice_series=KODERA_INVOICE_SERIES
+)
 KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 # Header trust and TLS termination belong to the operator's separately qualified proxy.
 # Gunicorn trusts no forwarded source by default. Never infer https from arbitrary headers;

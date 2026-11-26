@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.identity.selectors import current_identity, current_identity_for_organisation
@@ -111,8 +111,8 @@ class OrderInProgressError(Exception):
 
 class OrderInvoiceIssuedError(Exception):
     """The order's invoice cannot be credited in full: a payment for it is received, or a debit
-    submitted and still settling: `409 invoice-issued`. Only a partial credit note with a refund
-    corrects it, which Core does not issue yet, so the order is not cancelled."""
+    submitted and still settling: `409 invoice-issued`. Provider-confirmed refunds issue partial
+    credit notes through reconciliation, so this operation does not cancel the order."""
 
 
 # A SEPA debit settles or fails within about fourteen business days: past this, a payment still
@@ -696,8 +696,11 @@ def _payment_held(invoice: Invoice) -> bool:
 
 
 def credit_note_series() -> str:
-    """The credit notes' own series: `AV-` and the invoices' series (BILLING_MODEL.md §4)."""
-    return "AV-" + settings.KODERA_INVOICE_SERIES
+    """The configured independent, gapless credit-note series."""
+    series: str | None = settings.KODERA_CREDIT_NOTE_SERIES
+    if series is None:
+        raise BillingNotConfiguredError()
+    return series
 
 
 # The credit note's reason for each cancellation's: two legal bases, two codes.
@@ -711,12 +714,13 @@ def issue_credit_note(
     request_id: str | None = None,
     order_id: UUID | None = None,
 ) -> CreditNote:
-    """Credit an unpaid issued invoice in full: the credit note, numbered from its own gapless
+    """Credit the uncredited remainder of an unpaid issued invoice from its own gapless
     series and dated as it is allocated, with the invoice's VAT treatment, both parties' snapshot
-    and a copy of every line, then the invoice `credited`; audited as `credit_note.issued`.
+    and remaining line amounts, then the invoice `credited`; audited as `credit_note.issued`.
 
     Internal: the caller holds the invoice row locked in its transaction and has authorised the
-    act. The database refuses a second credit note for the invoice and any later change to one.
+    act. Existing refund notes consume the invoice and line ceilings. An already fully credited
+    invoice closes without allocating a number; its existing note is returned.
     """
     if not connection.in_atomic_block:
         raise RuntimeError("a credit note is issued in its caller's transaction")
@@ -725,6 +729,22 @@ def issue_credit_note(
     )
     if invoice.amount_paid_minor != 0:
         raise BillingValidationError("invoice", "paid_in_part")
+    prior = CreditNote.objects.filter(invoice=invoice)
+    previous = prior.aggregate(
+        net=Sum("total_excl_vat_minor"),
+        vat=Sum("vat_amount_minor"),
+        gross=Sum("total_incl_vat_minor"),
+    )
+    remaining_net = invoice.total_excl_vat_minor - (previous["net"] or 0)
+    remaining_vat = invoice.vat_amount_minor - (previous["vat"] or 0)
+    remaining_gross = invoice.total_incl_vat_minor - (previous["gross"] or 0)
+    if min(remaining_net, remaining_vat, remaining_gross) < 0:
+        raise BillingValidationError("invoice", "credit_note_ceiling_exceeded")
+    if remaining_gross == 0 and prior.exists():
+        set_invoice_state(invoice, "credited", actor=Actor("system", None, request_id))
+        return prior.latest("issued_at", "id")
+    if previous["gross"] and reason not in {"customer_cancellation", "unpaid_lapse"}:
+        raise BillingValidationError("invoice", "already_partially_credited")
     number, issued_at = _allocate(credit_note_series())
     note = CreditNote.objects.create(
         organisation_id=invoice.organisation_id,
@@ -748,26 +768,35 @@ def issue_credit_note(
         customer_country=invoice.customer_country,
         customer_siren=invoice.customer_siren,
         customer_vat_number=invoice.customer_vat_number,
-        total_excl_vat_minor=invoice.total_excl_vat_minor,
-        vat_amount_minor=invoice.vat_amount_minor,
-        total_incl_vat_minor=invoice.total_incl_vat_minor,
+        total_excl_vat_minor=remaining_net,
+        vat_amount_minor=remaining_vat,
+        total_incl_vat_minor=remaining_gross,
     )
-    CreditNoteLine.objects.bulk_create(
-        CreditNoteLine(
-            credit_note=note,
-            invoice_line=line,
-            position=line.position,
-            description=line.description,
-            quantity=line.quantity,
-            unit_amount_minor=line.unit_amount_minor,
-            total_excl_vat_minor=line.total_excl_vat_minor,
-            vat_rate_bp=line.vat_rate_bp,
-            vat_amount_minor=line.vat_amount_minor,
-            period_start=line.period_start,
-            period_end=line.period_end,
+    lines = []
+    for line in InvoiceLine.objects.filter(invoice=invoice).order_by("position"):
+        credited = CreditNoteLine.objects.filter(
+            credit_note__invoice=invoice, invoice_line=line
+        ).aggregate(net=Sum("total_excl_vat_minor"), vat=Sum("vat_amount_minor"))
+        net = line.total_excl_vat_minor - (credited["net"] or 0)
+        vat = line.vat_amount_minor - (credited["vat"] or 0)
+        if net + vat == 0 and previous["gross"]:
+            continue
+        lines.append(
+            CreditNoteLine(
+                credit_note=note,
+                invoice_line=line,
+                position=line.position,
+                description=line.description,
+                quantity=1 if previous["gross"] else line.quantity,
+                unit_amount_minor=net if previous["gross"] else line.unit_amount_minor,
+                total_excl_vat_minor=net,
+                vat_rate_bp=line.vat_rate_bp,
+                vat_amount_minor=vat,
+                period_start=line.period_start,
+                period_end=line.period_end,
+            )
         )
-        for line in InvoiceLine.objects.filter(invoice=invoice).order_by("position")
-    )
+    CreditNoteLine.objects.bulk_create(lines)
     set_invoice_state(invoice, "credited", actor=Actor("system", None, request_id))
     events.record(
         "credit_note.issued",
