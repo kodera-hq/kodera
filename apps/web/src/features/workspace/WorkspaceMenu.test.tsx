@@ -123,7 +123,7 @@ it.each([
     await userEvent.click(screen.getByRole('button', { name: 'Workspace' }))
     const entry = screen.getByRole('menuitem', { name: label })
     expect(entry.tagName).toBe('A')
-    expect(entry).toHaveAttribute('href', 'https://app.kodera.io/workspaces/new#community-sign-in')
+    expect(entry).toHaveAttribute('href', 'https://app.kodera.io/workspaces/new?signIn=community')
   } finally {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()

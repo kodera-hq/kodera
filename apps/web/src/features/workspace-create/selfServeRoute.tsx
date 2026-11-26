@@ -1,10 +1,6 @@
 import { createRoute, redirect } from '@tanstack/react-router'
 import { ApiProblem } from '../../api/client'
-import {
-  COMMUNITY_SIGN_IN_FRAGMENT,
-  onCommunityHost,
-  workspaceAppOrigin,
-} from '../../app/communityHost'
+import { onCommunityHost, workspaceAppOrigin } from '../../app/communityHost'
 import { loadCurrentUser } from '../../app/currentUser'
 import { SessionLoading } from '../../app/SessionLoading'
 import { rootRoute } from '../../app/root-route'
@@ -18,16 +14,17 @@ export const selfServeWorkspaceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/workspaces/new',
   pendingComponent: SessionLoading,
-  validateSearch: (search: Record<string, unknown>): { plan?: 'sovereign' } =>
-    search['plan'] === 'sovereign' ? { plan: 'sovereign' } : {},
-  beforeLoad: async ({ location, preload }) => {
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { plan?: 'sovereign'; signIn?: 'community' } => ({
+    ...(search['plan'] === 'sovereign' ? { plan: 'sovereign' } : {}),
+    ...(search['signIn'] === 'community' ? { signIn: 'community' } : {}),
+  }),
+  beforeLoad: async ({ location, preload, search }) => {
     if (onCommunityHost()) {
       throw redirect({ to: '/$org/workspace', params: { org: 'community' } })
     }
-    if (
-      location.hash === COMMUNITY_SIGN_IN_FRAGMENT &&
-      window.location.origin === workspaceAppOrigin()
-    ) {
+    if (search.signIn === 'community' && window.location.origin === workspaceAppOrigin()) {
       // Only the app owns this PKCE transaction. Return to the form without replaying the handoff.
       if (!preload) rememberReturnTo('/workspaces/new')
       return { communityHandoff: true }

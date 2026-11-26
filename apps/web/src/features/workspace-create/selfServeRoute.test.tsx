@@ -224,11 +224,11 @@ it('starts Community OIDC on the app origin and returns to the form without repl
   vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
   const appWindow = Object.create(window) as Window
   Object.defineProperty(appWindow, 'location', {
-    value: new URL('https://app.kodera.io/workspaces/new#community-sign-in'),
+    value: new URL('https://app.kodera.io/workspaces/new?signIn=community'),
   })
   vi.stubGlobal('window', appWindow)
   const signIn = vi.spyOn(authAdapter, 'signIn').mockResolvedValue(undefined)
-  await mount('/workspaces/new#community-sign-in')
+  await mount('/workspaces/new?signIn=community')
   await waitFor(() => expect(signIn).toHaveBeenCalledWith('community'))
   expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/workspaces/new')
   expect(dispatched).toHaveLength(0)

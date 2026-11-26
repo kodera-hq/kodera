@@ -20,8 +20,6 @@ export function onCommunityHost(hostname: string = window.location.hostname): bo
   return expected !== undefined && hostname === expected
 }
 
-export const COMMUNITY_SIGN_IN_FRAGMENT = 'community-sign-in'
-
 /** The app origin provisioned alongside the real Community host, when there is one. */
 export function workspaceAppOrigin(): string | undefined {
   const domain = matrixDomain()
@@ -40,5 +38,5 @@ export function communityWorkspaceCreationHref(
 ): string | undefined {
   if (!onCommunityHost(hostname)) return undefined
   const origin = workspaceAppOrigin()
-  return origin && `${origin}/workspaces/new#${COMMUNITY_SIGN_IN_FRAGMENT}`
+  return origin && `${origin}/workspaces/new?signIn=community`
 }

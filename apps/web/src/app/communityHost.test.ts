@@ -46,7 +46,7 @@ describe('the community host', () => {
     vi.stubEnv('VITE_AUTH_MODE', 'oidc')
     vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
     expect(communityWorkspaceCreationHref('community.kodera.io')).toBe(
-      'https://app.kodera.io/workspaces/new#community-sign-in'
+      'https://app.kodera.io/workspaces/new?signIn=community'
     )
     expect(communityWorkspaceCreationHref('app.kodera.io')).toBeUndefined()
     vi.stubEnv('VITE_AUTH_MODE', 'mock')
@@ -56,7 +56,7 @@ describe('the community host', () => {
     expect(communityWorkspaceCreationHref('community.example.org')).toBeUndefined()
     vi.stubEnv('VITE_APP_ORIGIN', 'https://work.example.org')
     expect(communityWorkspaceCreationHref('community.example.org')).toBe(
-      'https://work.example.org/workspaces/new#community-sign-in'
+      'https://work.example.org/workspaces/new?signIn=community'
     )
   })
 
