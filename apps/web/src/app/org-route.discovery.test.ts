@@ -40,7 +40,23 @@ beforeEach(async () => {
   ;({ ApiProblem } = await import('../api/client'))
   const { orgRoute } = await import('./org-route')
   guard = orgRoute.options.beforeLoad as unknown as typeof guard
-  vi.spyOn(auth, 'restoreSession').mockResolvedValue(false)
+  // Real `OidcAuthAdapter.restoreSession()` publishes a new pending generation when a realm hint
+  // exists in `sessionStorage`; simulate that bump so unit tests guard post-restore fencing.
+  let fakeGeneration = auth.getSnapshot().generation
+  const baseSnapshot = auth.getSnapshot.bind(auth)
+  vi.spyOn(auth, 'getSnapshot').mockImplementation(() => ({
+    ...baseSnapshot(),
+    generation: Math.max(baseSnapshot().generation, fakeGeneration),
+  }))
+  vi.spyOn(auth, 'restoreSession').mockImplementation(async () => {
+    fakeGeneration += 1
+    return false
+  })
+  const baseSignOut = auth.signOut.bind(auth)
+  vi.spyOn(auth, 'signOut').mockImplementation(async () => {
+    fakeGeneration += 2
+    await baseSignOut()
+  })
   vi.spyOn(auth, 'signIn').mockResolvedValue()
   discover.mockReset()
   loadCurrentUser.mockReset()

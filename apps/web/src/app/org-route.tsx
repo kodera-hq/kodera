@@ -115,15 +115,6 @@ export const orgRoute = createRoute({
   // must be discovered before sign-in: shared-realm workspaces do not use
   // their URL slug as their realm.
   beforeLoad: async ({ params, location, matches, routeId, cause, preload, abortController }) => {
-    const startGeneration = authAdapter.getSnapshot().generation
-    const canCommit = () =>
-      !abortController?.signal.aborted && authAdapter.getSnapshot().generation === startGeneration
-    const assertCurrent = () => {
-      if (!canCommit())
-        throw (
-          abortController?.signal.reason ?? new DOMException('Navigation superseded.', 'AbortError')
-        )
-    }
     // Speculation must not change authentication state, hints, or the return destination, nor park
     // a preload promise that a subsequent click navigation would wait behind.
     if (preload) {
@@ -194,6 +185,18 @@ export const orgRoute = createRoute({
     // Tenant organisations require their own issuer. The shared community and
     // shared-realm PME workspaces are verified by Core in `GET /me`.
     const restored = await authAdapter.restoreSession()
+    // Capture generation AFTER `restoreSession()`, which publishes a new pending generation while
+    // attempting silent SSO restoration when a realm hint exists in `sessionStorage`.
+    const activeGeneration = authAdapter.getSnapshot().generation
+    const canCommit = () =>
+      !abortController?.signal.aborted && authAdapter.getSnapshot().generation === activeGeneration
+    const assertCurrent = () => {
+      if (!canCommit())
+        throw (
+          abortController?.signal.reason ?? new DOMException('Navigation superseded.', 'AbortError')
+        )
+    }
+    assertCurrent()
     const currentRealm = authAdapter.getUser()?.realm
     if (
       restored &&
@@ -204,15 +207,17 @@ export const orgRoute = createRoute({
     ) {
       try {
         const { me } = await loadCurrentUser()
-        assertCurrent()
-        for (const entry of me.organisations) {
-          if (entry.shared_realm === true) {
-            rememberSharedRealmSlug(entry.organisation.slug)
+        if (canCommit()) {
+          for (const entry of me.organisations) {
+            if (entry.shared_realm === true) {
+              rememberSharedRealmSlug(entry.organisation.slug)
+            }
           }
         }
       } catch {
         // Fall through to normal sign-in when `/me` cannot verify shared-realm membership.
       }
+      assertCurrent()
     }
     const needsSignIn =
       !restored ||

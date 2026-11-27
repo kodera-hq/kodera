@@ -101,6 +101,24 @@ async function fixture(page: Page, planTier = 'freemium_pme', hostingMode?: stri
       })
     }
     if (origin !== app) return route.fulfill({ status: 404 })
+    if (pathname === '/api/v1/auth/discover' && request.method() === 'POST') {
+      const body = (request.postDataJSON() ?? {}) as { slug?: string }
+      const slug = body.slug ?? 'acme-sa'
+      return route.fulfill({
+        json: {
+          realm: slug,
+          issuer: `${app}/auth/realms/${slug}`,
+          openid_configuration_url: `${app}/auth/realms/${slug}/.well-known/openid-configuration`,
+          organisation: {
+            id: member.organisation.id,
+            slug,
+            realm: slug,
+            name: member.organisation.name,
+          },
+          candidates: [],
+        },
+      })
+    }
     if (pathname === '/api/v1/me')
       return route.fulfill({
         json: {
