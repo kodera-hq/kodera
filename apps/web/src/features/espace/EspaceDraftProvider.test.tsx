@@ -34,7 +34,14 @@ import { EspaceStore, matrixClientForTests } from './matrix/store'
 import type { EspaceSnapshot } from './matrix/store'
 import { AuthProvider, useAuthLifetime, type AuthLifetime } from '../../auth/AuthProvider'
 import type { AuthAdapter, AuthSessionSnapshot } from '../../auth/AuthAdapter'
-import { EspaceDraftProvider, useEspaceDraftMemory, type DraftLease } from './EspaceDraftProvider'
+import {
+  DraftMemory,
+  EspaceDraftProvider,
+  useEspaceDraftMemory,
+  type DraftLease,
+} from './EspaceDraftProvider'
+import { openEspaceVault } from './matrix/encryptedCache'
+import { createTestVaultIndexedDb } from './matrix/testVaultIdb'
 import { EspaceLiveView, type EspaceStoreLike } from './EspaceLiveView'
 import type { MessageView } from './matrix/timeline'
 import { createCurrentUserLoader } from '../../app/currentUser'
@@ -1732,4 +1739,206 @@ it('draft_memory_has_no_durable_or_diagnostic_effect', async () => {
     expect(h.router.state.location.href).not.toContain(secret)
     expect(h.store.send).not.toHaveBeenCalled()
   })
+})
+
+it('shared_realm_freemium_workspace_admits_community_session_and_fences_cross_org_drafts', async () => {
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.test')
+  clearMatrixSession()
+  const idb = createTestVaultIndexedDb()
+  const communityIssuer = 'https://id.example.test/realms/community'
+  const communityServer = 'community.kodera.test'
+  const communityMatrixUser = `@${SUBJECT}:${communityServer}`
+  const communityOrgId = '11111111-2222-4333-8444-555555555555'
+  const testingOrgId = '22222222-2222-4222-8222-222222222222'
+  const secondSharedOrgId = '33333333-3333-4333-8333-333333333333'
+  const communityWorkspace: Workspace = { ...workspace, organisation_id: communityOrgId }
+  const testingWorkspace: Workspace = { ...workspace, organisation_id: testingOrgId }
+  const secondWorkspace: Workspace = { ...workspace, organisation_id: secondSharedOrgId }
+  const session: MatrixSession = {
+    baseUrl: `https://matrix.${communityServer}`,
+    userId: communityMatrixUser,
+    deviceId: 'SHARED01',
+    accessToken: 'matrix-shared-01',
+    refreshToken: 'matrix-refresh-shared-01',
+    refresh: vi.fn(async () => {
+      throw new Error('Unexpected shared-realm token refresh')
+    }),
+  }
+  registerMatrixSession(session)
+
+  let snapshot: AuthSessionSnapshot = {
+    status: 'ready',
+    user: { realm: 'community', identity: { issuer: communityIssuer, subject: SUBJECT } },
+    generation: 1,
+    credentialGeneration: 1,
+  }
+  const usable = true
+  const listeners = new Set<() => void>()
+  const retirementStamp = {}
+  const lifetime: AuthLifetime = {
+    getSnapshot: () => snapshot,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    hasUsableCredential: () => usable,
+    getRetirementStamp: () => retirementStamp,
+  }
+  const baseStore = composedStore(communityMatrixUser)
+  const store: EspaceStoreLike = {
+    ...baseStore,
+    getRoomBoundary: () => 'ordinary',
+  }
+  const siblingVault = await openEspaceVault(
+    {
+      ownerId: 'owner-1',
+      organisationId: secondSharedOrgId,
+      membershipId: 'membership-testing-two',
+      deviceId: 'SHARED01',
+    },
+    { idb, delayMs: 0 }
+  )
+  await siblingVault.putDraft(ROOM, 'ordinary', 'sibling-preserved-draft', '')
+
+  // Initial mount on `/community/workspace` before `testing` exists in `me.organisations`:
+  // the initial `tenantSlugFor` closure does NOT yet map `testingOrgId` to `'community'`.
+  const initialTenantSlugFor = (orgId: string) =>
+    orgId === communityOrgId ? 'community' : 'testing'
+  const refreshedTenantSlugFor = (orgId: string) =>
+    orgId === communityOrgId || orgId === testingOrgId || orgId === secondSharedOrgId
+      ? 'community'
+      : undefined
+
+  const memory = new DraftMemory(
+    lifetime,
+    {
+      org: 'community',
+      sharedRealm: false,
+      organisationRealm: 'community',
+      organisationId: communityOrgId,
+      ownerId: 'owner-1',
+      membershipId: 'membership-community',
+      meGeneration: 1,
+      meCredentialGeneration: 1,
+    },
+    initialTenantSlugFor,
+    idb
+  )
+  const disconnect = memory.connect()
+  try {
+    expect(memory.canPresent(session, communityWorkspace, store)).toBe(true)
+    const communityLease = memory.attachView(store, communityWorkspace, ROOM)
+    expect(communityLease.update({ text: 'community-draft' })).toBe(true)
+
+    // In-SPA navigation `/community/workspace` -> `/testing/workspace` with refreshed `tenantSlugFor`
+    // admits `testing` (`shared_realm: true`) and retires `communityLease` without wiping sibling vaults.
+    memory.accept(
+      {
+        org: 'testing',
+        sharedRealm: true,
+        organisationRealm: 'community',
+        organisationId: testingOrgId,
+        ownerId: 'owner-1',
+        membershipId: 'membership-testing',
+        meGeneration: 1,
+        meCredentialGeneration: 1,
+      },
+      refreshedTenantSlugFor
+    )
+    expect(communityLease.read().text).toBe('')
+    expect(memory.canPresent(session, testingWorkspace, store)).toBe(true)
+    const testingLease = memory.attachView(store, testingWorkspace, ROOM)
+    expect(testingLease.update({ text: 'testing-org-secret-draft' })).toBe(true)
+    expect(testingLease.read().text).toBe('testing-org-secret-draft')
+    await new Promise((resolve) => setTimeout(resolve, 350))
+
+    // Switching `testing` -> `testing-two` on the same OIDC & Matrix session clears `testing`'s
+    // encrypted draft while keeping `siblingVault` open (no destructive whole-DB `wipe()` race).
+    memory.accept(
+      {
+        org: 'testing-two',
+        sharedRealm: true,
+        organisationRealm: 'community',
+        organisationId: secondSharedOrgId,
+        ownerId: 'owner-1',
+        membershipId: 'membership-testing-two',
+        meGeneration: 1,
+        meCredentialGeneration: 1,
+      },
+      refreshedTenantSlugFor
+    )
+    expect(testingLease.read().text).toBe('')
+    expect(testingLease.update({ text: 'stale-write' })).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(siblingVault.isClosed).toBe(false)
+    expect((await siblingVault.readDraft(ROOM))?.text).toBe('sibling-preserved-draft')
+    const reopenedTestingVault = await openEspaceVault(
+      {
+        ownerId: 'owner-1',
+        organisationId: testingOrgId,
+        membershipId: 'membership-testing',
+        deviceId: 'SHARED01',
+      },
+      { idb, delayMs: 0 }
+    )
+    expect(await reopenedTestingVault.readDraft(ROOM)).toBeNull()
+    await reopenedTestingVault.close()
+
+    expect(memory.canPresent(session, secondWorkspace, store)).toBe(true)
+    const secondLease = memory.attachView(store, secondWorkspace, ROOM)
+
+    // Missing or malformed `organisationRealm` values fail closed.
+    for (const badRealm of [null, undefined, '', 'ab', 'UPPER', 'bad.realm']) {
+      memory.accept(
+        {
+          org: 'testing-two',
+          sharedRealm: true,
+          organisationRealm: badRealm,
+          organisationId: secondSharedOrgId,
+          ownerId: 'owner-1',
+          membershipId: 'membership-testing-two',
+          meGeneration: 1,
+          meCredentialGeneration: 1,
+        },
+        refreshedTenantSlugFor
+      )
+      expect(memory.canPresent(session, secondWorkspace, store)).toBe(false)
+    }
+    expect(secondLease.read().text).toBe('')
+
+    // Restore valid shared-realm authority, attach an active lease, then move OIDC to foreign `staff`
+    // realm: active lease retires AND full session-termination `vault.wipe()` closes sibling handles.
+    memory.accept(
+      {
+        org: 'testing-two',
+        sharedRealm: true,
+        organisationRealm: 'community',
+        organisationId: secondSharedOrgId,
+        ownerId: 'owner-1',
+        membershipId: 'membership-testing-two',
+        meGeneration: 1,
+        meCredentialGeneration: 1,
+      },
+      refreshedTenantSlugFor
+    )
+    const activeBeforeForeign = memory.attachView(store, secondWorkspace, ROOM)
+    expect(activeBeforeForeign.update({ text: 'before-foreign-realm' })).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    snapshot = {
+      ...snapshot,
+      user: { realm: 'staff', identity: { issuer: communityIssuer, subject: SUBJECT } },
+    }
+    for (const listener of [...listeners]) listener()
+    expect(activeBeforeForeign.read().text).toBe('')
+    expect(memory.canPresent(session, secondWorkspace, store)).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(siblingVault.isClosed).toBe(true)
+  } finally {
+    disconnect()
+    if (!siblingVault.isClosed) await siblingVault.close()
+    clearMatrixSession()
+    vi.unstubAllEnvs()
+  }
 })

@@ -1,4 +1,5 @@
 import { permitsPlaintext, type RoomBoundary } from '../confidential/room-boundary'
+import { isTenantSlug } from '../../api/tenantSlug'
 import {
   createContext,
   useContext,
@@ -9,10 +10,7 @@ import {
 } from 'react'
 import { isDemoActive } from '../../app/interactiveDemo'
 import { useAuthLifetime, type AuthLifetime } from '../../auth/AuthProvider'
-import {
-  registerEspaceVaultCleanup,
-  registerLocalSessionCleanup,
-} from '../../auth/localSession'
+import { registerEspaceVaultCleanup, registerLocalSessionCleanup } from '../../auth/localSession'
 import {
   getMatrixRegistrationStamp,
   getMatrixSession,
@@ -58,6 +56,8 @@ export const EMPTY_DRAFT: ChannelDraft = Object.freeze({
 
 interface Authority {
   org: string
+  sharedRealm?: boolean | undefined
+  organisationRealm?: string | null | undefined
   organisationId: string
   ownerId?: string | undefined
   membershipId?: string | undefined
@@ -66,6 +66,7 @@ interface Authority {
 }
 interface Owner {
   generation: number
+  realm: string
   issuer: string
   subject: string
   coreStamp: object
@@ -213,7 +214,7 @@ export class DraftMemory {
   constructor(
     private readonly lifetime: AuthLifetime,
     initial: Authority,
-    private readonly tenantSlugFor: (organisationId: string) => string | undefined,
+    private tenantSlugFor: (organisationId: string) => string | undefined,
     private readonly idb: IDBFactory | undefined = globalThis.indexedDB
   ) {
     this.authority = initial
@@ -227,6 +228,15 @@ export class DraftMemory {
    */
   private serverSlug(): string | undefined {
     return this.tenantSlugFor(this.authority.organisationId)
+  }
+  private expectedRealm(): string | undefined {
+    if (this.authority.sharedRealm === true) {
+      return typeof this.authority.organisationRealm === 'string' &&
+        isTenantSlug(this.authority.organisationRealm)
+        ? this.authority.organisationRealm
+        : undefined
+    }
+    return this.authority.org
   }
   getSnapshot = () => this.revision
   getViewEpoch = () => this.viewEpoch
@@ -276,11 +286,7 @@ export class DraftMemory {
         return
       }
       const draft = this.drafts.get(roomId)
-      if (
-        !isVerifiedPlaintextBoundary(boundary) ||
-        !draft ||
-        (!draft.text && !draft.threadText)
-      ) {
+      if (!isVerifiedPlaintextBoundary(boundary) || !draft || (!draft.text && !draft.threadText)) {
         this.deleteEncryptedRoom(key, owner, roomId)
         return
       }
@@ -302,12 +308,7 @@ export class DraftMemory {
     try {
       if (vaultSupported(this.idb)) {
         const vault = await this.ensureVault(owner)
-        if (
-          vault === null ||
-          owner !== this.owner ||
-          this.terminal(owner) ||
-          !this.accepted()
-        ) {
+        if (vault === null || owner !== this.owner || this.terminal(owner) || !this.accepted()) {
           return
         }
         const currentBoundary = store.getRoomBoundary?.(roomId)
@@ -321,12 +322,7 @@ export class DraftMemory {
 
       const keyRecord = getOrCreateSessionDraftKey(owner.ownerKey)
       const cryptoKey = await keyRecord.keyPromise
-      if (
-        !keyRecord.active ||
-        owner !== this.owner ||
-        this.terminal(owner) ||
-        !this.accepted()
-      ) {
+      if (!keyRecord.active || owner !== this.owner || this.terminal(owner) || !this.accepted()) {
         return
       }
       const currentBoundary = store.getRoomBoundary?.(roomId)
@@ -404,7 +400,9 @@ export class DraftMemory {
   private deleteEncryptedRoom(storageKey: string, owner: Owner | null, roomId: string): void {
     this.deleteSessionEncryptedRoom(storageKey, roomId)
     if (owner !== null && vaultSupported(this.idb)) {
-      void this.ensureVault(owner).then((vault) => vault?.deleteDraft(roomId).catch(() => undefined))
+      void this.ensureVault(owner).then((vault) =>
+        vault?.deleteDraft(roomId).catch(() => undefined)
+      )
     }
   }
 
@@ -468,7 +466,8 @@ export class DraftMemory {
         const raw: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}')
         const entry =
           raw && typeof raw === 'object' && !Array.isArray(raw)
-            ? ((raw as Record<string, unknown>)[roomId] as Partial<EncryptedSessionDraftEntry> | undefined)
+            ? ((raw as Record<string, unknown>)[roomId] as
+                Partial<EncryptedSessionDraftEntry> | undefined)
             : undefined
         const entryBoundary = entry?.verifiedBoundary as RoomBoundary | undefined
         if (
@@ -520,12 +519,7 @@ export class DraftMemory {
         }
       }
 
-      if (
-        restored === null ||
-        owner !== this.owner ||
-        this.terminal(owner) ||
-        !this.accepted()
-      ) {
+      if (restored === null || owner !== this.owner || this.terminal(owner) || !this.accepted()) {
         return
       }
       const liveBoundary = store.getRoomBoundary?.(roomId)
@@ -550,11 +544,12 @@ export class DraftMemory {
     }
   }
 
-  private retire(clearStorage = true) {
+  private retire(clearStorage = true, forceWipe = false) {
     for (const pending of this.pendingWrites.values()) clearTimeout(pending.timer)
     this.pendingWrites.clear()
     purgePlaintextDraftStorage()
     const retiringOwner = this.owner
+    const wipeVault = forceWipe || (retiringOwner !== null && this.sessionTerminal(retiringOwner))
     const closingVault = this.vaultPromise
     this.vaultPromise = null
     if (clearStorage) {
@@ -569,7 +564,13 @@ export class DraftMemory {
         }
       }
       if (closingVault !== null) {
-        void closingVault.then((vault) => vault?.wipe().catch(() => undefined))
+        if (wipeVault) {
+          void closingVault.then((vault) => vault?.wipe().catch(() => undefined))
+        } else {
+          void closingVault.then((vault) =>
+            vault?.clearOwnerDraftsAndClose().catch(() => undefined)
+          )
+        }
       }
     } else if (closingVault !== null) {
       void closingVault.then((vault) => vault?.close().catch(() => undefined))
@@ -588,7 +589,7 @@ export class DraftMemory {
     this.views.clear()
     this.publish()
   }
-  private terminal(owner: Owner): boolean {
+  private sessionTerminal(owner: Owner): boolean {
     const live = this.lifetime.getSnapshot()
     const identity = live.user?.identity
     const session = getMatrixSession()
@@ -598,18 +599,26 @@ export class DraftMemory {
       !this.lifetime.hasUsableCredential() ||
       live.generation !== owner.generation ||
       this.lifetime.getRetirementStamp() !== owner.coreStamp ||
-      live.user?.realm !== owner.org ||
+      live.user?.realm !== owner.realm ||
       identity.issuer !== owner.issuer ||
       identity.subject !== owner.subject ||
-      this.authority.org !== owner.org ||
-      this.authority.organisationId !== owner.organisationId ||
       session !== owner.session ||
       getMatrixRegistrationStamp() !== owner.matrixStamp ||
       session.baseUrl !== owner.baseUrl ||
       session.userId !== owner.userId ||
-      session.deviceId !== owner.deviceId ||
+      session.deviceId !== owner.deviceId
+    )
+  }
+  private terminal(owner: Owner): boolean {
+    if (this.sessionTerminal(owner)) return true
+    const expectedRealm = this.expectedRealm()
+    return (
+      expectedRealm === undefined ||
+      owner.realm !== expectedRealm ||
+      this.authority.org !== owner.org ||
+      this.authority.organisationId !== owner.organisationId ||
       this.serverSlug() !== owner.serverSlug ||
-      espaceSessionFor(owner.serverSlug) !== session
+      espaceSessionFor(owner.serverSlug) !== owner.session
     )
   }
   private accepted(): boolean {
@@ -628,9 +637,11 @@ export class DraftMemory {
     const live = this.lifetime.getSnapshot()
     const identity = live.user?.identity
     const serverSlug = this.serverSlug()
+    const expectedRealm = this.expectedRealm()
     if (
       session === undefined ||
-      live.user?.realm !== this.authority.org ||
+      expectedRealm === undefined ||
+      live.user?.realm !== expectedRealm ||
       !identity?.issuer ||
       !identity.subject ||
       workspaceOrganisation !== this.authority.organisationId ||
@@ -694,8 +705,9 @@ export class DraftMemory {
       this.retire(this.owner !== null && this.terminal(this.owner))
     }
   }
-  accept(authority: Authority) {
+  accept(authority: Authority, tenantSlugFor?: (organisationId: string) => string | undefined) {
     this.authority = authority
+    if (tenantSlugFor !== undefined) this.tenantSlugFor = tenantSlugFor
     if (this.owner !== null && this.terminal(this.owner)) this.retire()
     else {
       if (this.owner === null) this.viewEpoch += 1
@@ -709,7 +721,13 @@ export class DraftMemory {
         !this.person(session, workspace.organisation_id) ||
         (store !== undefined && store.getUserId() !== this.owner.userId))
     )
-      this.retire()
+      this.retire(
+        true,
+        !this.person(session, workspace.organisation_id) &&
+          workspace.organisation_id === this.authority.organisationId
+          ? true
+          : store !== undefined && store.getUserId() !== this.owner.userId
+      )
   }
   attachView(
     store: EspaceStoreLike,
@@ -732,6 +750,7 @@ export class DraftMemory {
     ) {
       const live = this.lifetime.getSnapshot()
       const identity = live.user!.identity!
+      const realm = live.user!.realm!
       const principal: EspaceVaultPrincipal = {
         ownerId: this.authority.ownerId ?? identity.subject,
         organisationId: this.authority.organisationId,
@@ -740,6 +759,7 @@ export class DraftMemory {
       }
       this.owner = {
         generation: live.generation,
+        realm,
         issuer: identity.issuer,
         subject: identity.subject,
         coreStamp: this.lifetime.getRetirementStamp(),
@@ -867,6 +887,8 @@ export function useEspaceDraftMemory() {
 export function EspaceDraftProvider({
   children,
   org,
+  sharedRealm,
+  organisationRealm,
   organisationId,
   ownerId,
   membershipId,
@@ -882,20 +904,31 @@ export function EspaceDraftProvider({
   const authority = useMemo(
     () => ({
       org,
+      sharedRealm,
+      organisationRealm,
       organisationId,
       ownerId,
       membershipId,
       meGeneration,
       meCredentialGeneration,
     }),
-    [org, organisationId, ownerId, membershipId, meGeneration, meCredentialGeneration]
+    [
+      org,
+      sharedRealm,
+      organisationRealm,
+      organisationId,
+      ownerId,
+      membershipId,
+      meGeneration,
+      meCredentialGeneration,
+    ]
   )
   // Fixed for the provider's life: the application has one query cache.
   const [memory] = useState(() => new DraftMemory(lifetime, authority, tenantSlugFor))
   useLayoutEffect(() => memory.connect(), [memory])
   useLayoutEffect(() => {
-    memory.accept(authority)
-  }, [memory, authority])
+    memory.accept(authority, tenantSlugFor)
+  }, [memory, authority, tenantSlugFor])
   // Local demo stores own their drafts and never acquire a Matrix transport lease.
   // Registration comes exclusively from the mock browser bootstrap for this organisation.
   return (
