@@ -26,6 +26,7 @@ import { useTranslation } from 'react-i18next'
 import { ToastProvider } from '../ui/Toast/Toast'
 import { trackOrganisationSwitched } from './analytics'
 import type { components } from '../api/schema'
+import { isOrganisationSlug } from '../api/organisationSlug'
 import { useAuth, useAuthLifetime } from '../auth/AuthProvider'
 import { notifyOrganisationCleanup } from '../auth/localSession'
 import { EspaceDraftProvider } from '../features/espace/EspaceDraftProvider'
@@ -45,6 +46,7 @@ import { RouteError } from './RouteError'
 import { RouteFocus } from './RouteFocus'
 import { loadCurrentUser } from './currentUser'
 import {
+  forgetSharedRealmSlug,
   isKnownSharedRealmSlug,
   isPublicCommunityMember,
   isSharedRealmFreemiumMember,
@@ -79,6 +81,18 @@ function holdExpiredRoute(signal: AbortSignal): Promise<never> {
   })
 }
 
+function isCoveredSession(org: string): boolean {
+  return (
+    authAdapter.getAccessToken() !== undefined &&
+    sessionCoversOrganisation(
+      authAdapter.getUser()?.realm,
+      org,
+      import.meta.env.VITE_AUTH_MODE === 'oidc',
+      isKnownSharedRealmSlug(org)
+    )
+  )
+}
+
 let expiredNavigation:
   | {
       readonly org: string
@@ -97,15 +111,26 @@ export const orgRoute = createRoute({
   pendingMs: ORGANISATION_PENDING_MS,
   pendingMinMs: ORGANISATION_PENDING_MIN_MS,
   // Runs before the loader, so an unauthenticated visit never issues the
-  // `/me` request at all. A deep link already names the organisation, so it
-  // goes straight to sign-in for that realm rather than through the generic
-  // `/login` screen (§3 reserves that one for a direct visit to `/`, which
-  // has no organisation to discover a realm from yet) — the realm-discovery
-  // step this simplifies past (mapping a slug to its Keycloak realm via
-  // `POST /auth/discover`) is Wave 1 work; treating the URL segment as the
-  // realm is this unit's stand-in, true for every scenario the shell ships
-  // with today.
-  beforeLoad: async ({ params, location, matches, routeId, cause }) => {
+  // `/me` request at all. A deep link names an organisation, whose issuer
+  // must be discovered before sign-in: shared-realm workspaces do not use
+  // their URL slug as their realm.
+  beforeLoad: async ({ params, location, matches, routeId, cause, preload, abortController }) => {
+    // Speculation must not change authentication state, hints, or the return destination, nor park
+    // a preload promise that a subsequent click navigation would wait behind.
+    if (preload) {
+      if (
+        authAdapter.getAccessToken() === undefined ||
+        !sessionCoversOrganisation(
+          authAdapter.getUser()?.realm,
+          params.org,
+          import.meta.env.VITE_AUTH_MODE === 'oidc',
+          isKnownSharedRealmSlug(params.org)
+        )
+      ) {
+        throw new DOMException('Unauthenticated preload skipped.', 'AbortError')
+      }
+      return { holdExpiredRoute: false }
+    }
     const session = authAdapter.getSnapshot()
     const retained = matches.some(
       (match) => match.routeId === routeId && match.status === 'success'
@@ -160,6 +185,18 @@ export const orgRoute = createRoute({
     // Tenant organisations require their own issuer. The shared community and
     // shared-realm PME workspaces are verified by Core in `GET /me`.
     const restored = await authAdapter.restoreSession()
+    // Capture generation AFTER `restoreSession()`, which publishes a new pending generation while
+    // attempting silent SSO restoration when a realm hint exists in `sessionStorage`.
+    const activeGeneration = authAdapter.getSnapshot().generation
+    const canCommit = () =>
+      !abortController?.signal.aborted && authAdapter.getSnapshot().generation === activeGeneration
+    const assertCurrent = () => {
+      if (!canCommit())
+        throw (
+          abortController?.signal.reason ?? new DOMException('Navigation superseded.', 'AbortError')
+        )
+    }
+    assertCurrent()
     const currentRealm = authAdapter.getUser()?.realm
     if (
       restored &&
@@ -170,14 +207,17 @@ export const orgRoute = createRoute({
     ) {
       try {
         const { me } = await loadCurrentUser()
-        for (const entry of me.organisations) {
-          if (entry.shared_realm === true) {
-            rememberSharedRealmSlug(entry.organisation.slug)
+        if (canCommit()) {
+          for (const entry of me.organisations) {
+            if (entry.shared_realm === true) {
+              rememberSharedRealmSlug(entry.organisation.slug)
+            }
           }
         }
       } catch {
         // Fall through to normal sign-in when `/me` cannot verify shared-realm membership.
       }
+      assertCurrent()
     }
     const needsSignIn =
       !restored ||
@@ -189,22 +229,44 @@ export const orgRoute = createRoute({
         isKnownSharedRealmSlug(params.org)
       )
     if (needsSignIn) {
+      assertCurrent()
       if (params.org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
         rememberReturnTo(location.href)
         throw redirect({ to: '/login', search: { org: 'community' } })
       }
+      if (import.meta.env.VITE_AUTH_MODE === 'oidc') {
+        if (!isOrganisationSlug(params.org)) {
+          forgetSharedRealmSlug(params.org)
+          throw notFound()
+        }
+        const hadKnownSharedHint = isKnownSharedRealmSlug(params.org)
+        const { discoverSignInRealm } = await import('../auth/discoverSignInRealm')
+        assertCurrent()
+        const resolution = await discoverSignInRealm(params.org, canCommit)
+        assertCurrent()
+        if (resolution.kind === 'not-found') throw notFound()
+        if (isCoveredSession(params.org)) return { holdExpiredRoute: false }
+        rememberReturnTo(location.href)
+        if (resolution.kind === 'login-fallback') {
+          if (hadKnownSharedHint) {
+            await authAdapter.signIn('community')
+            return { holdExpiredRoute: !isCoveredSession(params.org) }
+          }
+          throw redirect({ to: '/login', search: { org: params.org } })
+        }
+        await authAdapter.signIn(resolution.realm)
+        return { holdExpiredRoute: !isCoveredSession(params.org) }
+      }
       rememberReturnTo(location.href)
-      // Awaited so the loader below never runs in the gap: `signIn` resolves
-      // once the browser navigation to the identity provider has been
-      // initiated, not once it has finished — nothing after that point in
-      // this script matters, since the page is on its way out.
-      await authAdapter.signIn(params.org)
+      await authAdapter.signIn(isKnownSharedRealmSlug(params.org) ? 'community' : params.org)
     }
     return { holdExpiredRoute: false }
   },
   loader: async ({
     params,
+    location,
     context,
+    preload,
     abortController,
   }): Promise<{
     me: Me
@@ -225,6 +287,7 @@ export const orgRoute = createRoute({
     } = await loadCurrentUser()
     const current = authAdapter.getSnapshot()
     if (
+      abortController.signal.aborted ||
       current.status !== 'ready' ||
       current.generation !== meGeneration ||
       current.credentialGeneration !== meCredentialGeneration ||
@@ -233,16 +296,66 @@ export const orgRoute = createRoute({
       throw new DOMException('Session ended.', 'AbortError')
     // The session works: a later 401 is a new expiry, not a failed return
     // from the error screen's sign-in round trip.
-    clearReauthenticationFromError()
+    if (!preload) clearReauthenticationFromError()
     const membership = me.organisations.find((entry) => entry.organisation.slug === params.org)
     // Unknown slug → the not-found screen, not a thrown error (§3): a stale
     // bookmark or a mistyped URL is not the same failure as the Core API
     // being unreachable.
     if (membership === undefined) {
+      if (preload) throw new DOMException('Speculative preload requires sign-in.', 'AbortError')
+      forgetSharedRealmSlug(params.org)
+      if (
+        import.meta.env.VITE_AUTH_MODE === 'oidc' &&
+        current.user?.realm === 'community' &&
+        params.org !== 'community' &&
+        isOrganisationSlug(params.org)
+      ) {
+        const canCommit = () =>
+          !abortController.signal.aborted &&
+          current.generation === authAdapter.getSnapshot().generation
+        const { discoverSignInRealm } = await import('../auth/discoverSignInRealm')
+        const resolution = await discoverSignInRealm(params.org, canCommit)
+        if (canCommit() && resolution.kind === 'resolved' && resolution.realm === params.org) {
+          rememberReturnTo(location.href)
+          await authAdapter.signIn(params.org)
+          if (isCoveredSession(params.org)) {
+            throw redirect({ href: location.href, replace: true })
+          }
+          await holdExpiredRoute(abortController.signal)
+        }
+      }
       throw notFound()
     }
-    if (membership.shared_realm === true) {
-      rememberSharedRealmSlug(membership.organisation.slug)
+    const coveredByMembership = sessionCoversOrganisation(
+      current.user?.realm,
+      params.org,
+      import.meta.env.VITE_AUTH_MODE === 'oidc',
+      membership.shared_realm === true
+    )
+    if (!coveredByMembership) {
+      if (preload) throw new DOMException('Speculative preload requires sign-in.', 'AbortError')
+      if (membership.shared_realm === true) {
+        rememberSharedRealmSlug(membership.organisation.slug)
+      } else {
+        forgetSharedRealmSlug(membership.organisation.slug)
+      }
+      const targetRealm = membership.shared_realm === true ? 'community' : params.org
+      if (import.meta.env.VITE_AUTH_MODE === 'oidc' && targetRealm !== current.user?.realm) {
+        rememberReturnTo(location.href)
+        await authAdapter.signIn(targetRealm)
+        if (isCoveredSession(params.org)) {
+          throw redirect({ href: location.href, replace: true })
+        }
+        await holdExpiredRoute(abortController.signal)
+      }
+      throw notFound()
+    }
+    if (!preload) {
+      if (membership.shared_realm === true) {
+        rememberSharedRealmSlug(membership.organisation.slug)
+      } else {
+        forgetSharedRealmSlug(membership.organisation.slug)
+      }
     }
     return { me, membership, meGeneration, meCredentialGeneration }
   },

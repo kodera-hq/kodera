@@ -11,7 +11,9 @@ import { HomeRecovery } from './HomeRecovery'
 // landmark and its content sat in none (axe `landmark-one-main`, `region`).
 // `RouteError.tsx` makes the same choice the same way.
 
-import { useMatches } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { forgetSharedRealmSlug } from '../auth/sharedRealmHints'
+import { useMatches, useParams } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 /** `orgRoute`'s id, spelled rather than imported: `org-route.tsx` imports
@@ -20,11 +22,15 @@ const ORG_ROUTE_ID = '/$org'
 
 export function NotFoundOrganisation() {
   const { t } = useTranslation()
+  const { org } = useParams({ strict: false })
   // The shell is on screen only when the organisation layout itself loaded.
   const inShell = useMatches({
     select: (matches) =>
       matches.some((match) => match.routeId === ORG_ROUTE_ID && match.status === 'success'),
   })
+  useEffect(() => {
+    if (!inShell && typeof org === 'string') forgetSharedRealmSlug(org)
+  }, [inShell, org])
   const Frame = inShell ? 'div' : 'main'
   return (
     <Frame className="flex min-h-screen flex-col items-center justify-center gap-3 p-6 text-center">

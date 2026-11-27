@@ -2,15 +2,12 @@ import type { components } from '../api/schema'
 import type { AuthIdentity } from '../auth/AuthAdapter'
 import { resolveCurrentIdentity } from './currentIdentity'
 
-const knownSharedRealmSlugs = new Set<string>()
-
-export function rememberSharedRealmSlug(slug: string): void {
-  if (slug && slug !== 'community') knownSharedRealmSlugs.add(slug)
-}
-
-export function isKnownSharedRealmSlug(slug: string): boolean {
-  return knownSharedRealmSlugs.has(slug)
-}
+export {
+  rememberSharedRealmSlug,
+  forgetSharedRealmSlug,
+  isKnownSharedRealmSlug,
+  clearKnownSharedRealmSlugs,
+} from '../auth/sharedRealmHints'
 
 /** Community and shared-realm PME memberships are verified by Core; dedicated tenants remain issuer scoped. */
 export function sessionCoversOrganisation(
@@ -21,9 +18,9 @@ export function sessionCoversOrganisation(
 ): boolean {
   return (
     realm !== undefined &&
-    (realm === slug ||
-      (sharedCommunity && slug === 'community') ||
-      (sharedRealmOrg && realm === 'community'))
+    (sharedRealmOrg
+      ? realm === 'community'
+      : realm === slug || (sharedCommunity && slug === 'community'))
   )
 }
 

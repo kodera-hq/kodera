@@ -1,3 +1,9 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import axe from 'axe-core'
@@ -68,6 +74,83 @@ describe('real MFA enrollment remains unavailable', () => {
 })
 
 describe('Community OIDC MFA enrolment and step-up', () => {
+  it.each(['/testing/security/mfa', '/testing/security/mfa/', '/%74esting/security/mfa'])(
+    'returns shared-realm MFA enrollment to its own workspace (%s)',
+    async (path) => {
+      const realm = 'community'
+      vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+      vi.stubEnv('VITE_ENABLE_MSW', '0')
+      authState.realm = realm
+      window.history.replaceState(null, '', path)
+      const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+      const { container } = render(
+        <MfaEnrolScreen
+          accountEmail="owner@example.test"
+          org="testing"
+          sharedRealm={true}
+          onEnrolled={vi.fn()}
+        />
+      )
+      expect(container.querySelector('[style]')).toBeNull()
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: 'Vérifier avec mon code 2FA' }))
+      expect(signIn).toHaveBeenCalledWith(realm, { prompt: 'login' })
+      expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/testing/workspace')
+    }
+  )
+
+  it('uses the router pathname when memory history differs from the browser URL', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'community'
+    const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+    const root = createRootRoute({
+      component: () => (
+        <MfaEnrolScreen
+          accountEmail="owner@example.test"
+          org="testing"
+          sharedRealm={true}
+          onEnrolled={vi.fn()}
+        />
+      ),
+    })
+    const router = createRouter({
+      routeTree: root,
+      history: createMemoryHistory({ initialEntries: ['/%74esting/security/mfa/'] }),
+    })
+    render(<RouterProvider router={router} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Vérifier avec mon code 2FA' }))
+    expect(signIn).toHaveBeenCalledExactlyOnceWith('community', { prompt: 'login' })
+    expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/testing/workspace')
+  })
+
+  it.each([
+    { org: 'testing', sharedRealm: false, realm: 'community' },
+    { org: 'another', sharedRealm: true, realm: 'community' },
+    { org: undefined, sharedRealm: true, realm: 'community' },
+    { org: 'testing', sharedRealm: true, realm: 'acme-sa' },
+    { org: 'testing', sharedRealm: true, realm: 'kodera-staff' },
+  ])(
+    'refuses enrollment without the exact shared-realm route and issuer: %j',
+    async ({ org, sharedRealm, realm }) => {
+      vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+      authState.realm = realm
+      window.history.replaceState(null, '', '/testing/security/mfa')
+      const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+      render(
+        <MfaEnrolScreen
+          accountEmail="owner@example.test"
+          org={org}
+          sharedRealm={sharedRealm}
+          onEnrolled={vi.fn()}
+        />
+      )
+      expect(screen.getAllByRole('button')).toHaveLength(1)
+      expect(signIn).not.toHaveBeenCalled()
+    }
+  )
+
   it('offers Keycloak TOTP setup, 2FA step-up sign-in, and sign-out for the community realm', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'oidc')
     vi.stubEnv('VITE_ENABLE_MSW', '0')

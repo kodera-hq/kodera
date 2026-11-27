@@ -1,3 +1,4 @@
+import { useRouter, useRouterState } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../auth/AuthProvider'
@@ -10,6 +11,8 @@ import { communityCopy } from '../login/communityMessages'
 
 export interface MfaEnrolScreenProps {
   accountEmail: string
+  org?: string | undefined
+  sharedRealm?: boolean | undefined
   memberRole?: string | undefined
   onEnrolled: () => void
 }
@@ -27,6 +30,20 @@ const Simulation =
     : undefined
 
 export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
+  const router = useRouter({ warn: false })
+  return router ? (
+    <RoutedMfaEnrolScreen {...props} />
+  ) : (
+    <MfaEnrolAtPath {...props} pathname={window.location.pathname} />
+  )
+}
+
+function RoutedMfaEnrolScreen(props: MfaEnrolScreenProps) {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  return <MfaEnrolAtPath {...props} pathname={pathname} />
+}
+
+function MfaEnrolAtPath(props: MfaEnrolScreenProps & { pathname: string }) {
   const { t } = useTranslation()
   const auth = useAuth()
   if (Simulation !== undefined) {
@@ -37,17 +54,29 @@ export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
     )
   }
   const activeRealm = auth.user?.realm
+  let pathname = props.pathname
+  try {
+    pathname = decodeURIComponent(pathname).replace(/\/+$/, '')
+  } catch {
+    // Malformed path encoding cannot grant access to enrollment.
+    return <EnrollmentUnavailable />
+  }
+  const targetOrg = props.org ?? (pathname === '/community/security/mfa' ? 'community' : undefined)
   if (
     import.meta.env.VITE_AUTH_MODE === 'oidc' &&
-    typeof window !== 'undefined' &&
-    window.location.pathname === '/community/security/mfa' &&
-    (activeRealm === 'community' || activeRealm === 'kodera-staff')
+    targetOrg !== undefined &&
+    (activeRealm === 'community' || activeRealm === 'kodera-staff') &&
+    (targetOrg === 'community' ||
+      (props.sharedRealm === true &&
+        pathname === `/${targetOrg}/security/mfa` &&
+        activeRealm === 'community'))
   ) {
     return (
       <CommunityMfaEnrol
         accountEmail={props.accountEmail}
         realm={activeRealm}
         memberRole={props.memberRole}
+        targetOrg={targetOrg}
       />
     )
   }
@@ -58,10 +87,12 @@ function CommunityMfaEnrol({
   accountEmail,
   realm,
   memberRole,
+  targetOrg,
 }: {
   accountEmail: string
   realm: 'community' | 'kodera-staff'
   memberRole?: string | undefined
+  targetOrg: string
 }) {
   const { i18n } = useTranslation()
   const auth = useAuth()
@@ -95,7 +126,11 @@ function CommunityMfaEnrol({
     setPending(true)
     setFailed(false)
     try {
-      rememberReturnTo('/community/workspace')
+      rememberReturnTo(
+        targetOrg === 'community'
+          ? '/community/workspace'
+          : `/${encodeURIComponent(targetOrg)}/workspace`
+      )
       await authAdapter.signIn(realm, options)
     } catch {
       setPending(false)

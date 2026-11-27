@@ -29,6 +29,8 @@ function SecurityMfaRoute() {
   const { org } = securityMfaRoute.useParams()
   return (
     <MfaEnrolScreen
+      org={org}
+      sharedRealm={membership.shared_realm}
       accountEmail={me.email}
       memberRole={membership.role}
       onEnrolled={() => void router.navigate({ to: '/$org/home', params: { org } })}

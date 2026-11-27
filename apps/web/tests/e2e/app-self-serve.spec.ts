@@ -129,6 +129,34 @@ async function mockWorkspaceApi(page: Page) {
       : [communityMembership]
     return route.fulfill({ json: { ...getMe.body, identities: [user], organisations } })
   })
+  await page.route(app + '/api/v1/auth/discover', (route) => {
+    const body = (route.request().postDataJSON() ?? {}) as { slug?: string }
+    if (hasWorkspace && body.slug === slug) {
+      return route.fulfill({
+        json: {
+          realm: 'community',
+          issuer,
+          openid_configuration_url: issuer + '/.well-known/openid-configuration',
+          organisation: {
+            id: created.organisation_id,
+            slug,
+            realm: 'community',
+            name: workspaceName,
+          },
+          candidates: [],
+        },
+      })
+    }
+    return route.fulfill({
+      json: {
+        realm: null,
+        issuer: null,
+        openid_configuration_url: null,
+        organisation: null,
+        candidates: [],
+      },
+    })
+  })
   await page.route(app + '/api/v1/organisations/*/workspace', (route) =>
     route.fulfill({ json: getWorkspace.body })
   )
@@ -254,4 +282,37 @@ test('Community hands sign-in to the app once and reuses the restored session', 
   await expectCardlessForm(page)
   await expect(page).toHaveURL(form)
   expect(authorizations.map((url) => url.searchParams.get('prompt'))).toEqual([null, 'none'])
+})
+
+test('hard reload on a shared-realm workspace when silent iframe cookies are blocked recovers via community OIDC discovery', async ({
+  page,
+}) => {
+  await signIn(page, app)
+  await page.goto(form)
+  await expectCardlessForm(page)
+  await fillWorkspace(page, slug)
+  await createWorkspace(page)
+
+  // Simulate Brave Shields blocking third-party cookies in hidden silent-renew iframes (`prompt=none`),
+  // while top-level interactive SSO (`prompt` absent) succeeds on `realms/community`.
+  await page.route(issuer + '/authorize?**', (route) => {
+    const request = new URL(route.request().url())
+    const callback = new URL(request.searchParams.get('redirect_uri')!)
+    callback.searchParams.set('state', request.searchParams.get('state')!)
+    if (request.searchParams.get('prompt') === 'none') {
+      callback.searchParams.set('error', 'login_required')
+    } else {
+      callback.searchParams.set('code', 'fixture-code')
+    }
+    return route.fulfill({
+      contentType: 'text/html',
+      body: `<meta http-equiv="refresh" content="0;url=${callback.href.replaceAll('&', '&amp;')}">`,
+    })
+  })
+
+  await page.reload()
+  await expect(page).toHaveURL(app + '/' + slug + '/workspace')
+  await expect(switcher(page, workspaceName)).toBeVisible()
+  await expect(page.getByRole('link', { name: 'bienvenue', exact: true })).toBeVisible()
+  await expect(page.getByText("Impossible d'afficher votre console")).toHaveCount(0)
 })

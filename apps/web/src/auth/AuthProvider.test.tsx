@@ -267,6 +267,7 @@ describe('AuthProvider / useAuth', () => {
     expect(sequence).toEqual([
       'sdk-cleanup-started',
       'session-ended',
+      'storage-cleared:kodera.web.auth.sharedRealmSlugs',
       'storage-cleared:kodera.web.auth.returnTo',
     ])
     expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBeNull()

@@ -42,7 +42,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiProblem } from '../api/client'
+import { isOrganisationSlug } from '../api/organisationSlug'
+import { isKnownSharedRealmSlug } from '../auth/sharedRealmHints'
 import type { ProblemType } from '../api/generated/problems'
+import { authAdapter } from '../auth/oidc'
 import { useAuth } from '../auth/AuthProvider'
 import { useReauthenticate } from '../auth/sessionExpiry'
 import { rememberReturnTo } from '../auth/return-to'
@@ -113,6 +116,25 @@ function SessionExpiredContent() {
   const reauthenticate = useReauthenticate()
   const params = useParams({ strict: false })
   const org = typeof params.org === 'string' ? params.org : undefined
+  const realmHint =
+    org === undefined
+      ? undefined
+      : auth.user?.realm === org
+        ? org
+        : import.meta.env.VITE_AUTH_MODE === 'oidc'
+          ? undefined
+          : isKnownSharedRealmSlug(org)
+            ? 'community'
+            : org
+  const [pending, setPending] = useState(false)
+  const pendingRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   // Read once: the answer is about how this screen was reached.
   const [restoreFailed] = useState(reauthenticationFromErrorPending)
 
@@ -149,22 +171,59 @@ function SessionExpiredContent() {
       />
       <Actions>
         <Button
+          disabled={pending}
           onClick={() => {
-            if (org !== undefined) {
-              markReauthenticationFromError()
-              if (reauthenticate(org)) return
-              clearReauthenticationFromError()
-            }
+            if (pendingRef.current) return
+            pendingRef.current = true
+            setPending(true)
             const returnTo = router.state.location.href
-            // Retire the refused credential before LoginRoute can reuse it.
-            // Sign-out clears session storage, so remember the destination afterwards.
-            void auth
-              .signOut()
-              .catch(() => {})
-              .then(() => {
-                rememberReturnTo(returnTo)
-                return router.navigate({ to: '/login' })
+            const generation = authAdapter.getSnapshot().generation
+            const stillOwnsRecovery = () =>
+              mountedRef.current && router.state.location.href === returnTo
+            const canCommit = () =>
+              stillOwnsRecovery() && authAdapter.getSnapshot().generation === generation
+            const start = (hint?: string) => {
+              markReauthenticationFromError()
+              if (reauthenticate(hint)) return true
+              clearReauthenticationFromError()
+              return false
+            }
+            if (org !== undefined && start(realmHint)) return
+            void (async () => {
+              if (org !== undefined && import.meta.env.VITE_AUTH_MODE === 'oidc') {
+                if (org === 'community') {
+                  if (start('community')) return
+                } else if (isOrganisationSlug(org)) {
+                  try {
+                    const { discoverSignInRealm } = await import('../auth/discoverSignInRealm')
+                    const resolution = await discoverSignInRealm(org, canCommit)
+                    if (!canCommit()) return
+                    if (resolution.kind === 'resolved' && start(resolution.realm)) return
+                    if (
+                      resolution.kind === 'login-fallback' &&
+                      isKnownSharedRealmSlug(org) &&
+                      start('community')
+                    )
+                      return
+                  } catch {
+                    // Discovery cannot recover this session; use the ordinary login screen.
+                  }
+                }
+              }
+              if (!canCommit()) return
+              clearReauthenticationFromError()
+              // Sign-out clears session storage, so remember the destination afterwards.
+              await auth.signOut().catch(() => {})
+              if (!stillOwnsRecovery()) return
+              rememberReturnTo(returnTo)
+              await router.navigate({
+                to: '/login',
+                search: org !== undefined && isOrganisationSlug(org) ? { org } : {},
               })
+            })().finally(() => {
+              pendingRef.current = false
+              if (mountedRef.current) setPending(false)
+            })
           }}
         >
           {t('console.shell.session.action-sign-in-again')}
