@@ -23,7 +23,8 @@ import { authAdapter } from '../auth/oidc'
 import type * as Analytics from './analytics'
 import { AppProviders, createQueryClient } from './providers'
 import { ROUTE_UNITS, createAppRouter } from './routeTree'
-import { notifyRouteError } from './RouteError'
+import { notifyRouteError, RouteError } from './RouteError'
+import { clearKnownSharedRealmSlugs, rememberSharedRealmSlug } from './communityAccess'
 
 const { loadCurrentUser, trackSessionExpiryDialogShown } = vi.hoisted(() => ({
   loadCurrentUser: vi.fn(),
@@ -34,6 +35,9 @@ vi.mock('./analytics', async (importOriginal) => ({
   ...(await importOriginal<typeof Analytics>()),
   trackSessionExpiryDialogShown,
 }))
+
+const discover = vi.hoisted(() => vi.fn())
+vi.mock('../api/mutations', () => ({ mutate: discover }))
 
 const MARKER = 'kodera.web.session.reauthenticatingFromError'
 
@@ -75,6 +79,7 @@ beforeAll(async () => {
 }, 60_000)
 
 beforeEach(() => {
+  clearKnownSharedRealmSlugs()
   // jsdom has no scrolling; the router restores scroll on every navigation.
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   vi.spyOn(authAdapter, 'restoreSession').mockResolvedValue(true)
@@ -82,9 +87,15 @@ beforeEach(() => {
   vi.spyOn(authAdapter, 'getUser').mockReturnValue({ realm: 'acme-sa' })
   vi.spyOn(authAdapter, 'signIn').mockResolvedValue(undefined)
   vi.spyOn(authAdapter, 'signOut').mockResolvedValue(undefined)
+  discover.mockReset()
   loadCurrentUser.mockReset()
   trackSessionExpiryDialogShown.mockReset()
   sessionStorage.clear()
+})
+
+afterEach(() => {
+  clearKnownSharedRealmSlugs()
+  vi.unstubAllEnvs()
 })
 
 /** `router.invalidate` of the last router `openConsoleAt` built, watched from
@@ -121,7 +132,128 @@ async function openConsoleAt(path: string) {
   return router
 }
 
+/** Isolate recovery from the organisation guard: no session has ever populated the realm ref. */
+function openExpiredWorkspace(org: string) {
+  const root = createRootRoute({ component: Outlet })
+  const failed = createRoute({
+    getParentRoute: () => root,
+    path: '$org/workspace',
+    loader: () => {
+      throw UNAUTHENTICATED
+    },
+    errorComponent: RouteError,
+  })
+  const login = createRoute({
+    getParentRoute: () => root,
+    path: 'login',
+    component: () => null,
+  })
+  const router = createRouter({
+    routeTree: root.addChildren([failed, login]),
+    history: createMemoryHistory({ initialEntries: [`/${org}/workspace`] }),
+  })
+  window.history.replaceState(null, '', `/${org}/workspace`)
+  render(
+    <AppProviders queryClient={createQueryClient()}>
+      <RouterProvider router={router} />
+    </AppProviders>
+  )
+  return router
+}
+
 describe('a 401 while the page loads', () => {
+  it.each([
+    { org: 'testing', realm: 'community', known: false },
+    { org: 'testing', realm: 'community', known: true },
+    { org: 'acme-sa', realm: 'acme-sa', known: false },
+    { org: 'community', realm: 'community', known: false },
+  ])(
+    'preserves local data on OIDC recovery without a retained session: %j',
+    async ({ org, realm, known }) => {
+      vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+      vi.spyOn(authAdapter, 'getUser').mockReturnValue(undefined)
+      if (known) rememberSharedRealmSlug(org)
+      discover.mockResolvedValue({ realm, organisation: { slug: org, realm } })
+      sessionStorage.setItem('synthetic.draft', 'unsaved local text')
+      const router = openExpiredWorkspace(org)
+      await screen.findByRole('heading', { name: "Votre session n'est pas reconnue" })
+      await userEvent.click(screen.getByRole('button', { name: 'Se reconnecter' }))
+      await waitFor(() => expect(authAdapter.signIn).toHaveBeenCalledExactlyOnceWith(realm))
+      expect(authAdapter.signOut).not.toHaveBeenCalled()
+      expect(discover).toHaveBeenCalledTimes(org === 'community' ? 0 : 1)
+      expect(sessionStorage.getItem('synthetic.draft')).toBe('unsaved local text')
+      expect(sessionStorage.getItem(MARKER)).toBe('1')
+      expect(router.state.location.pathname).toBe(`/${org}/workspace`)
+      expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe(`/${org}/workspace`)
+    }
+  )
+
+  it('cancels an in-flight reconnect if the user navigates away before discovery settles', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.spyOn(authAdapter, 'getUser').mockReturnValue(undefined)
+    let rejectDiscovery!: (reason?: unknown) => void
+    discover.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectDiscovery = reject
+      })
+    )
+    sessionStorage.setItem('synthetic.draft', 'keep after leaving')
+    const router = openExpiredWorkspace('testing')
+    await userEvent.click(await screen.findByRole('button', { name: 'Se reconnecter' }))
+    await waitFor(() => expect(discover).toHaveBeenCalledOnce())
+    await router.navigate({ to: '/login' })
+    rejectDiscovery(new ApiProblem({ type: null, status: 503, title: 'Unavailable' }))
+    await Promise.resolve()
+    expect(authAdapter.signOut).not.toHaveBeenCalled()
+    expect(authAdapter.signIn).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('synthetic.draft')).toBe('keep after leaving')
+  })
+
+  it('coalesces reconnect clicks while cold realm discovery is pending', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.spyOn(authAdapter, 'getUser').mockReturnValue(undefined)
+    let resolve!: (value: unknown) => void
+    discover.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    openExpiredWorkspace('testing')
+    const button = await screen.findByRole('button', { name: 'Se reconnecter' })
+    await userEvent.click(button)
+    await userEvent.click(button)
+    await waitFor(() => expect(discover).toHaveBeenCalledOnce())
+    expect(button).toBeDisabled()
+    resolve({ realm: 'community', organisation: { slug: 'testing', realm: 'community' } })
+    await waitFor(() => expect(authAdapter.signIn).toHaveBeenCalledExactlyOnceWith('community'))
+    expect(authAdapter.signOut).not.toHaveBeenCalled()
+  })
+
+  it.each(['not-found', 'login-fallback', 'error'])(
+    'falls back to login only after discovery cannot recover (%s)',
+    async (kind) => {
+      vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+      vi.spyOn(authAdapter, 'getUser').mockReturnValue(undefined)
+      if (kind === 'not-found') discover.mockResolvedValue({ realm: null })
+      else
+        discover.mockRejectedValue(
+          new ApiProblem({
+            type: null,
+            status: kind === 'login-fallback' ? 429 : 503,
+            title: 'Discovery failed',
+          })
+        )
+      const router = openExpiredWorkspace('testing')
+      await userEvent.click(await screen.findByRole('button', { name: 'Se reconnecter' }))
+      await waitFor(() => expect(router.state.location.pathname).toBe('/login'))
+      expect(router.state.location.search).toEqual({ org: 'testing' })
+      expect(authAdapter.signOut).toHaveBeenCalledOnce()
+      expect(authAdapter.signIn).not.toHaveBeenCalled()
+      expect(sessionStorage.getItem(MARKER)).toBeNull()
+      expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/testing/workspace')
+    }
+  )
+
   it('offers to sign in again, in French, keeping the destination', async () => {
     loadCurrentUser.mockRejectedValue(UNAUTHENTICATED)
     await openConsoleAt('/acme-sa/invoices')

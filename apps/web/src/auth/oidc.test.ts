@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import { QueryClient } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './AuthProvider'
+import { isKnownSharedRealmSlug, rememberSharedRealmSlug } from '../app/communityAccess'
 import type * as OidcClientTs from 'oidc-client-ts'
 
 import.meta.env['VITE_KEYCLOAK_URL'] = 'https://id.example.test'
@@ -138,10 +139,13 @@ describe('OidcAuthAdapter', () => {
     })
     await adapter.handleCallback()
     expect(adapter.getAccessToken()).toBe('token-123')
+    rememberSharedRealmSlug('testing')
 
     await adapter.signOut()
     expect(adapter.getAccessToken()).toBeUndefined()
     expect(removeUser).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('kodera.web.auth.sharedRealmSlugs')).toBeNull()
+    expect(isKnownSharedRealmSlug('testing')).toBe(false)
   })
 
   it('onExpiring returns an unsubscribe function', () => {
@@ -198,7 +202,10 @@ describe('OidcAuthAdapter', () => {
     })
 
     removeUser.mockRejectedValueOnce(new Error('SDK removal failed'))
+    rememberSharedRealmSlug('testing')
     await expect(adapter.signOut()).rejects.toThrow('SDK cleanup failed')
+    expect(sessionStorage.getItem('kodera.web.auth.sharedRealmSlugs')).toBeNull()
+    expect(isKnownSharedRealmSlug('testing')).toBe(false)
     expect(adapter.getAccessToken()).toBeUndefined()
     expect(removeUser).toHaveBeenCalledTimes(1)
     expect(adapter.getSnapshot().status).toBe('unauthenticated')

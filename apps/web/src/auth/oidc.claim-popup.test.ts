@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthAdapter, AuthCallbackResult } from './AuthAdapter'
 import * as desktopOidc from './desktopOidc'
 import { OidcAuthAdapter } from './oidc'
+import * as sharedRealmHints from './sharedRealmHints'
 
 type Context = Readonly<{
   purpose: 'owner-claim' | 'invitation'
@@ -696,6 +697,7 @@ function load(control?: Control | CorrectionControl): Constructor {
     if (specifier === '../config')
       return { keycloakUrl: () => provider, oidcClientId: () => 'console' }
     if (specifier === './desktopOidc') return desktopOidc
+    if (specifier === './sharedRealmHints') return sharedRealmHints
     throw new Error('B_SOURCE_IMPORT_REFUSED')
   }
   new Script(converted.outputText, { filename: 'owned-auth-acceptance.cjs' }).runInNewContext(

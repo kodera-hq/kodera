@@ -1,4 +1,5 @@
 import { retireSessionGeneration } from './sessionGeneration'
+import { clearKnownSharedRealmSlugs } from './sharedRealmHints'
 
 // Explicit logout discards the console's local customer data. Storage is
 // best-effort: browser policy must not prevent in-memory logout or navigation.
@@ -204,6 +205,7 @@ export interface ClearLocalSessionOptions {
 }
 
 export function clearLocalSessionStorage(options?: ClearLocalSessionOptions): void {
+  clearKnownSharedRealmSlugs()
   retireSessionGeneration()
   for (const listener of [...cleanupListeners]) {
     try {

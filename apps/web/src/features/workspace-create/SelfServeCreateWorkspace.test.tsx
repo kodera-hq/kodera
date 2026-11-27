@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type * as RouterModule from '@tanstack/react-router'
 import '@/i18n'
 import { setTokenProvider } from '@/api/client'
-import { isKnownSharedRealmSlug } from '@/app/communityAccess'
+import { clearKnownSharedRealmSlugs, isKnownSharedRealmSlug } from '@/app/communityAccess'
 import { resetIdempotencyStore } from '@/mocks/generated/handlers'
 import { server } from '@/mocks/server'
 import { SelfServeCreateWorkspace } from './CreateWorkspace'
@@ -35,6 +35,7 @@ beforeEach(() => {
   setTokenProvider(() => 'synthetic-community-bearer')
   navigateMock.mockReset()
   navigateMock.mockResolvedValue(undefined)
+  clearKnownSharedRealmSlugs()
 })
 afterEach(() => {
   server.resetHandlers()
@@ -80,6 +81,10 @@ describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
   )
 
   it('provisions a cardless freemium PME workspace and navigates straight to /$org/workspace', async () => {
+    let hintAtNavigation: unknown
+    navigateMock.mockImplementation(async () => {
+      hintAtNavigation = sessionStorage.getItem('kodera.web.auth.sharedRealmSlugs')
+    })
     const observed: { key: string | null; body: unknown }[] = []
     server.use(
       http.post('*/api/v1/workspaces/self-serve', async ({ request }) => {
@@ -126,6 +131,7 @@ describe('SelfServeCreateWorkspace (B1.1 cardless PME self-serve)', () => {
       locale: 'fr',
     })
     expect(isKnownSharedRealmSlug('studio-lumiere')).toBe(true)
+    expect(JSON.parse(hintAtNavigation as string)).toContain('studio-lumiere')
   })
 
   it('offers clickable slug suggestions on 409 slug-taken and surfaces 429 rate limits', async () => {

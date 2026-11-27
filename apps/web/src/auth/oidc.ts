@@ -7,6 +7,7 @@
 
 import type { User, UserManager } from 'oidc-client-ts'
 import { keycloakUrl, oidcClientId } from '../config'
+import { clearKnownSharedRealmSlugs } from './sharedRealmHints'
 import {
   desktopOidcExchangeLoopback,
   desktopOidcRefreshSession,
@@ -726,6 +727,7 @@ export class OidcAuthAdapter implements AuthAdapter {
   }
 
   async signOut(): Promise<void> {
+    clearKnownSharedRealmSlugs()
     const claim = this.#claim
     if (claim !== undefined) return this.#signOutClaim(claim)
     const manager = this.#manager

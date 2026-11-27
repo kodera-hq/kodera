@@ -16,9 +16,15 @@ import {
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
+import {
+  clearKnownSharedRealmSlugs,
+  isKnownSharedRealmSlug,
+  rememberSharedRealmSlug,
+} from './communityAccess'
 import { NotFoundOrganisation } from './NotFoundOrganisation'
 
 beforeEach(() => {
+  clearKnownSharedRealmSlugs()
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
 })
 
@@ -52,6 +58,13 @@ function openAt(path: string, membership: boolean) {
 }
 
 describe('NotFoundOrganisation', () => {
+  it('evicts the route slug from shared-realm hints when displaying a 404', async () => {
+    rememberSharedRealmSlug('testing')
+    openAt('/testing/home', false)
+    await screen.findByRole('heading', { name: 'Organisation introuvable' })
+    expect(isKnownSharedRealmSlug('testing')).toBe(false)
+  })
+
   it('names the cause in French, from the catalogue', async () => {
     openAt('/nowhere/home', false)
     expect(
@@ -71,10 +84,12 @@ describe('NotFoundOrganisation', () => {
     expect(screen.getByRole('main')).toContainElement(heading)
   })
 
-  it('adds no second main inside the shell', async () => {
-    openAt('/acme-sa/no-such-page', true)
+  it('adds no second main inside the shell and preserves a valid shared-realm hint', async () => {
+    rememberSharedRealmSlug('testing')
+    openAt('/testing/no-such-page', true)
     const heading = await screen.findByRole('heading', { name: 'Organisation introuvable' })
     expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByRole('main')).toContainElement(heading)
+    expect(isKnownSharedRealmSlug('testing')).toBe(true)
   })
 })

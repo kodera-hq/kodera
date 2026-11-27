@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../api/schema'
 import type { AuthIdentity } from '../auth/AuthAdapter'
 import { resolveCurrentIdentity } from './currentIdentity'
@@ -87,6 +87,7 @@ describe('canonical community access', () => {
     expect(sessionCoversOrganisation('community', 'atelier-alpha', true, false)).toBe(false)
     expect(sessionCoversOrganisation('community', 'atelier-alpha', true, true)).toBe(true)
     expect(sessionCoversOrganisation('acme-sa', 'atelier-alpha', true, true)).toBe(false)
+    expect(sessionCoversOrganisation('atelier-alpha', 'atelier-alpha', true, true)).toBe(false)
   })
 
   it('resolves exact per-organisation shared-realm identities and exempts freemium_pme from forced MFA', () => {
@@ -166,5 +167,118 @@ describe('canonical community access', () => {
     rememberSharedRealmSlug('atelier-alpha')
     expect(isKnownSharedRealmSlug('atelier-alpha')).toBe(true)
     expect(isKnownSharedRealmSlug('community')).toBe(false)
+  })
+})
+
+describe('shared-realm hints across reloads', () => {
+  const key = 'kodera.web.auth.sharedRealmSlugs'
+  beforeEach(() => sessionStorage.clear())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+  async function freshHints() {
+    vi.resetModules()
+    return import('./communityAccess')
+  }
+
+  it('persists validated slugs and lazily hydrates them in a fresh module', async () => {
+    const hints = await freshHints()
+    hints.rememberSharedRealmSlug('testing')
+    for (const invalid of ['', 'BAD-ORG', 'abcd', 'invalid.org', 'testing\n', 'a'.repeat(21)]) {
+      hints.rememberSharedRealmSlug(invalid)
+      expect(hints.isKnownSharedRealmSlug(invalid)).toBe(false)
+    }
+    hints.rememberSharedRealmSlug('community')
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(['testing'])
+    expect((await freshHints()).isKnownSharedRealmSlug('testing')).toBe(true)
+  })
+
+  it.each(['broken json', '{}', 'null', '42'])('ignores malformed storage: %s', async (stored) => {
+    sessionStorage.setItem(key, stored)
+    const hints = await freshHints()
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+    hints.rememberSharedRealmSlug('testing')
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(['testing'])
+  })
+
+  it('filters stored entries, deduplicates them, and bounds both storage and memory to 64 slugs', async () => {
+    sessionStorage.setItem(
+      key,
+      JSON.stringify([null, 123, {}, 'BAD-ORG', 'community', 'testing', 'testing'])
+    )
+    const hints = await freshHints()
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(true)
+    for (let index = 0; index < 70; index++) hints.rememberSharedRealmSlug(`space-${index}`)
+    const stored: string[] = JSON.parse(sessionStorage.getItem(key)!)
+    expect(stored).toHaveLength(64)
+    expect(new Set(stored).size).toBe(64)
+    expect(stored).toContain('space-69')
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+    expect(hints.isKnownSharedRealmSlug('space-0')).toBe(false)
+    const reloaded = await freshHints()
+    expect(reloaded.isKnownSharedRealmSlug('testing')).toBe(false)
+    expect(reloaded.isKnownSharedRealmSlug('space-69')).toBe(true)
+  })
+
+  it('caps oversized stored arrays to 64 valid entries', async () => {
+    sessionStorage.setItem(
+      key,
+      JSON.stringify(Array.from({ length: 80 }, (_, index) => `space-${index}`))
+    )
+    const hints = await freshHints()
+    expect(hints.isKnownSharedRealmSlug('space-79')).toBe(true)
+    expect(hints.isKnownSharedRealmSlug('space-0')).toBe(false)
+    hints.rememberSharedRealmSlug('testing')
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toHaveLength(64)
+  })
+
+  it('keeps memory usable when browser storage throws, including during cleanup', async () => {
+    const hints = await freshHints()
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('Storage blocked')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Storage blocked')
+    })
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('Storage blocked')
+    })
+    expect(() => hints.rememberSharedRealmSlug('testing')).not.toThrow()
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(true)
+    hints.clearKnownSharedRealmSlugs()
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+  })
+
+  it('clears persisted hints and memory during local session cleanup', async () => {
+    const hints = await freshHints()
+    hints.rememberSharedRealmSlug('testing')
+    const { clearLocalSessionStorage } = await import('../auth/localSession')
+    clearLocalSessionStorage()
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+  })
+
+  it('does not rehydrate old hints when storage removal fails during sign-out', async () => {
+    const hints = await freshHints()
+    hints.rememberSharedRealmSlug('testing')
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => {
+      throw new Error('Storage blocked')
+    })
+    hints.clearKnownSharedRealmSlugs()
+    expect(sessionStorage.getItem(key)).toBe('[]')
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+    expect((await freshHints()).isKnownSharedRealmSlug('testing')).toBe(false)
+  })
+
+  it('forgets a hydrated slug and persists the remaining hints across reloads', async () => {
+    sessionStorage.setItem(key, '["testing","acme-sa"]')
+    const hints = await freshHints()
+    hints.forgetSharedRealmSlug('testing')
+    expect(hints.isKnownSharedRealmSlug('testing')).toBe(false)
+    expect(sessionStorage.getItem(key)).toBe('["acme-sa"]')
+    const reloaded = await freshHints()
+    expect(reloaded.isKnownSharedRealmSlug('testing')).toBe(false)
+    expect(reloaded.isKnownSharedRealmSlug('acme-sa')).toBe(true)
   })
 })
