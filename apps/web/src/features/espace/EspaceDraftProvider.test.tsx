@@ -34,7 +34,12 @@ import { EspaceStore, matrixClientForTests } from './matrix/store'
 import type { EspaceSnapshot } from './matrix/store'
 import { AuthProvider, useAuthLifetime, type AuthLifetime } from '../../auth/AuthProvider'
 import type { AuthAdapter, AuthSessionSnapshot } from '../../auth/AuthAdapter'
-import { EspaceDraftProvider, useEspaceDraftMemory, type DraftLease } from './EspaceDraftProvider'
+import {
+  DraftMemory,
+  EspaceDraftProvider,
+  useEspaceDraftMemory,
+  type DraftLease,
+} from './EspaceDraftProvider'
 import { EspaceLiveView, type EspaceStoreLike } from './EspaceLiveView'
 import type { MessageView } from './matrix/timeline'
 import { createCurrentUserLoader } from '../../app/currentUser'
@@ -1732,4 +1737,125 @@ it('draft_memory_has_no_durable_or_diagnostic_effect', async () => {
     expect(h.router.state.location.href).not.toContain(secret)
     expect(h.store.send).not.toHaveBeenCalled()
   })
+})
+
+it('shared_realm_freemium_workspace_admits_community_session_and_fences_cross_org_drafts', () => {
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.test')
+  clearMatrixSession()
+  const communityIssuer = 'https://id.example.test/realms/community'
+  const communityServer = 'community.kodera.test'
+  const communityMatrixUser = `@${SUBJECT}:${communityServer}`
+  const testingOrgId = '22222222-2222-4222-8222-222222222222'
+  const secondSharedOrgId = '33333333-3333-4333-8333-333333333333'
+  const testingWorkspace: Workspace = { ...workspace, organisation_id: testingOrgId }
+  const secondWorkspace: Workspace = { ...workspace, organisation_id: secondSharedOrgId }
+  const session: MatrixSession = {
+    baseUrl: `https://matrix.${communityServer}`,
+    userId: communityMatrixUser,
+    deviceId: 'SHARED01',
+    accessToken: 'matrix-shared-01',
+    refreshToken: 'matrix-refresh-shared-01',
+    refresh: vi.fn(async () => {
+      throw new Error('Unexpected shared-realm token refresh')
+    }),
+  }
+  registerMatrixSession(session)
+
+  let snapshot: AuthSessionSnapshot = {
+    status: 'ready',
+    user: { realm: 'community', identity: { issuer: communityIssuer, subject: SUBJECT } },
+    generation: 1,
+    credentialGeneration: 1,
+  }
+  const usable = true
+  const listeners = new Set<() => void>()
+  const retirementStamp = {}
+  const lifetime: AuthLifetime = {
+    getSnapshot: () => snapshot,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    hasUsableCredential: () => usable,
+    getRetirementStamp: () => retirementStamp,
+  }
+  const store = composedStore(communityMatrixUser)
+  const memory = new DraftMemory(
+    lifetime,
+    {
+      org: 'testing',
+      sharedRealm: true,
+      organisationRealm: 'community',
+      organisationId: testingOrgId,
+      ownerId: 'owner-1',
+      membershipId: 'membership-testing',
+      meGeneration: 1,
+      meCredentialGeneration: 1,
+    },
+    () => 'community',
+    undefined
+  )
+  const disconnect = memory.connect()
+  try {
+    expect(memory.canPresent(session, testingWorkspace, store)).toBe(true)
+    const testingLease = memory.attachView(store, testingWorkspace, ROOM)
+    expect(testingLease.update({ text: 'testing-org-secret-draft' })).toBe(true)
+    expect(testingLease.read().text).toBe('testing-org-secret-draft')
+
+    // Switching to a second shared-realm PME organisation sharing the same `community` OIDC &
+    // Matrix session retires the first organisation's draft lease without leaking drafts.
+    memory.accept({
+      org: 'testing-two',
+      sharedRealm: true,
+      organisationRealm: 'community',
+      organisationId: secondSharedOrgId,
+      ownerId: 'owner-1',
+      membershipId: 'membership-testing-two',
+      meGeneration: 1,
+      meCredentialGeneration: 1,
+    })
+    expect(testingLease.read().text).toBe('')
+    expect(testingLease.update({ text: 'stale-write' })).toBe(false)
+    expect(memory.canPresent(session, secondWorkspace, store)).toBe(true)
+    const secondLease = memory.attachView(store, secondWorkspace, ROOM)
+    expect(secondLease.read().text).toBe('')
+
+    // Missing or malformed organisationRealm on a shared-realm workspace fails closed.
+    memory.accept({
+      org: 'testing-two',
+      sharedRealm: true,
+      organisationRealm: null,
+      organisationId: secondSharedOrgId,
+      ownerId: 'owner-1',
+      membershipId: 'membership-testing-two',
+      meGeneration: 1,
+      meCredentialGeneration: 1,
+    })
+    expect(memory.canPresent(session, secondWorkspace, store)).toBe(false)
+    expect(secondLease.read().text).toBe('')
+
+    // Foreign OIDC realm (`staff`) on a shared-realm workspace also fails closed.
+    memory.accept({
+      org: 'testing-two',
+      sharedRealm: true,
+      organisationRealm: 'community',
+      organisationId: secondSharedOrgId,
+      ownerId: 'owner-1',
+      membershipId: 'membership-testing-two',
+      meGeneration: 1,
+      meCredentialGeneration: 1,
+    })
+    snapshot = {
+      ...snapshot,
+      user: { realm: 'staff', identity: { issuer: communityIssuer, subject: SUBJECT } },
+    }
+    for (const listener of [...listeners]) listener()
+    expect(memory.canPresent(session, secondWorkspace, store)).toBe(false)
+  } finally {
+    disconnect()
+    clearMatrixSession()
+    vi.unstubAllEnvs()
+  }
 })

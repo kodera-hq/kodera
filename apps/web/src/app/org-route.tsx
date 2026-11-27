@@ -322,6 +322,8 @@ function OrgLayout() {
       <EspaceDraftProvider
         tenantSlugFor={tenantSlugFor}
         org={membership.organisation.slug}
+        sharedRealm={membership.shared_realm}
+        organisationRealm={membership.organisation.realm}
         organisationId={membership.organisation.id}
         ownerId={me.id}
         membershipId={membership.membership_id}
