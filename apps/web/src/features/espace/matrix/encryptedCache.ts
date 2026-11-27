@@ -1292,7 +1292,9 @@ export class EspaceVault {
   }
 
   /** Background hydration of remaining ordinary/community room timelines after active channel paint. */
-  async readRemainingRooms(excludeRoomId?: string | undefined): Promise<Map<string, VaultRoomPayload>> {
+  async readRemainingRooms(
+    excludeRoomId?: string | undefined
+  ): Promise<Map<string, VaultRoomPayload>> {
     if (this.#closed) return new Map()
     return this.#coordinator.runExclusive(async () => {
       const result = new Map<string, VaultRoomPayload>()
@@ -1321,7 +1323,8 @@ export class EspaceVault {
       const staleIds: string[] = []
       for (const raw of loaded.roomRows) {
         const candidate = raw as Partial<EncryptedVaultRow> | undefined
-        if (!candidate || candidate.id === sidebarId || typeof candidate.roomId !== 'string') continue
+        if (!candidate || candidate.id === sidebarId || typeof candidate.roomId !== 'string')
+          continue
         if (candidate.roomId === excludeRoomId) continue
         if (quarantined.has(candidate.roomId)) {
           if (typeof candidate.id === 'string') staleIds.push(candidate.id)
@@ -1627,7 +1630,10 @@ export class EspaceVault {
             await idbRequest(
               roomsStore.delete(recordId(owner.ownerKey, 'sidebar', SIDEBAR_ROOM_SENTINEL))
             )
-          } else if (preparedSidebar !== null && preparedSidebar.incarnation === owner.incarnation) {
+          } else if (
+            preparedSidebar !== null &&
+            preparedSidebar.incarnation === owner.incarnation
+          ) {
             await idbRequest(roomsStore.put(preparedSidebar))
           }
         },
@@ -1967,7 +1973,12 @@ export class EspaceVault {
             snapshot.owner,
             row
           )) as Partial<VaultSidebarPayload>
-          if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.rooms) || !Array.isArray(parsed.channels)) {
+          if (
+            !parsed ||
+            parsed.v !== 1 ||
+            !Array.isArray(parsed.rooms) ||
+            !Array.isArray(parsed.channels)
+          ) {
             continue
           }
           const nextRooms = parsed.rooms.filter(
@@ -2474,6 +2485,38 @@ export class EspaceVault {
     this.closeImmediate()
   }
 
+  /**
+   * Deletes only this principal's encrypted draft rows and closes this handle without revoking
+   * sibling principals or wiping quarantine/outbox/room stores during a same-session org switch.
+   */
+  async clearOwnerDraftsAndClose(): Promise<void> {
+    if (this.#closed) return this.#writing
+    try {
+      await this.#coordinator.runExclusive(async () => {
+        if (this.#closed) return
+        await runVaultTx(
+          this.#db,
+          'readwrite',
+          async (tx) => {
+            const store = tx.objectStore('drafts')
+            const rows = await idbRequest(store.index('ownerKey').getAll(this.#ownerKey))
+            for (const raw of Array.isArray(rows) ? rows : []) {
+              const id = (raw as { id?: unknown } | null)?.id
+              if (typeof id === 'string') {
+                await idbRequest(store.delete(id))
+              }
+            }
+          },
+          this.#alive,
+          this.#transactions
+        )
+      })
+    } catch {
+      // Fall through to closeImmediate even if storage is unavailable or revoked.
+    }
+    this.closeImmediate()
+  }
+
   #releaseOwnerOnce(): void {
     if (this.#releasedOwner) return
     this.#releasedOwner = true
@@ -2622,7 +2665,10 @@ export class EspaceVault {
           }
         })
     )
-    this.#writing = this.#writing.then(() => tombstoneDone, () => tombstoneDone)
+    this.#writing = this.#writing.then(
+      () => tombstoneDone,
+      () => tombstoneDone
+    )
     return tombstoneDone
   }
 
@@ -2671,9 +2717,7 @@ function deleteDatabaseAsync(idb: IDBFactory, name: string): Promise<void> {
  * `CryptoKey`s with tombstones, clearing `'rooms'`, `'outbox'`, `'drafts'`, `'quarantine'`,
  * closing handles, and deleting `'kodera.espace-vault.v1'` + `'kodera-espace-timelines'`).
  */
-export function wipeEspaceVault(
-  idb: IDBFactory | undefined = globalThis.indexedDB
-): Promise<void> {
+export function wipeEspaceVault(idb: IDBFactory | undefined = globalThis.indexedDB): Promise<void> {
   notifyVaultSearchEviction({ kind: 'all' })
   const coordinator = getVaultCoordinator(idb, ESPACE_VAULT_DATABASE)
   coordinator.revokeAll()

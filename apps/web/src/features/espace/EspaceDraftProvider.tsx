@@ -214,7 +214,7 @@ export class DraftMemory {
   constructor(
     private readonly lifetime: AuthLifetime,
     initial: Authority,
-    private readonly tenantSlugFor: (organisationId: string) => string | undefined,
+    private tenantSlugFor: (organisationId: string) => string | undefined,
     private readonly idb: IDBFactory | undefined = globalThis.indexedDB
   ) {
     this.authority = initial
@@ -544,11 +544,12 @@ export class DraftMemory {
     }
   }
 
-  private retire(clearStorage = true) {
+  private retire(clearStorage = true, forceWipe = false) {
     for (const pending of this.pendingWrites.values()) clearTimeout(pending.timer)
     this.pendingWrites.clear()
     purgePlaintextDraftStorage()
     const retiringOwner = this.owner
+    const wipeVault = forceWipe || (retiringOwner !== null && this.sessionTerminal(retiringOwner))
     const closingVault = this.vaultPromise
     this.vaultPromise = null
     if (clearStorage) {
@@ -563,7 +564,13 @@ export class DraftMemory {
         }
       }
       if (closingVault !== null) {
-        void closingVault.then((vault) => vault?.wipe().catch(() => undefined))
+        if (wipeVault) {
+          void closingVault.then((vault) => vault?.wipe().catch(() => undefined))
+        } else {
+          void closingVault.then((vault) =>
+            vault?.clearOwnerDraftsAndClose().catch(() => undefined)
+          )
+        }
       }
     } else if (closingVault !== null) {
       void closingVault.then((vault) => vault?.close().catch(() => undefined))
@@ -582,30 +589,36 @@ export class DraftMemory {
     this.views.clear()
     this.publish()
   }
-  private terminal(owner: Owner): boolean {
+  private sessionTerminal(owner: Owner): boolean {
     const live = this.lifetime.getSnapshot()
     const identity = live.user?.identity
     const session = getMatrixSession()
-    const expectedRealm = this.expectedRealm()
-    if (identity === undefined || session === undefined || expectedRealm === undefined) return true
+    if (identity === undefined || session === undefined) return true
     return (
       live.status === 'unauthenticated' ||
       !this.lifetime.hasUsableCredential() ||
       live.generation !== owner.generation ||
       this.lifetime.getRetirementStamp() !== owner.coreStamp ||
       live.user?.realm !== owner.realm ||
-      owner.realm !== expectedRealm ||
       identity.issuer !== owner.issuer ||
       identity.subject !== owner.subject ||
-      this.authority.org !== owner.org ||
-      this.authority.organisationId !== owner.organisationId ||
       session !== owner.session ||
       getMatrixRegistrationStamp() !== owner.matrixStamp ||
       session.baseUrl !== owner.baseUrl ||
       session.userId !== owner.userId ||
-      session.deviceId !== owner.deviceId ||
+      session.deviceId !== owner.deviceId
+    )
+  }
+  private terminal(owner: Owner): boolean {
+    if (this.sessionTerminal(owner)) return true
+    const expectedRealm = this.expectedRealm()
+    return (
+      expectedRealm === undefined ||
+      owner.realm !== expectedRealm ||
+      this.authority.org !== owner.org ||
+      this.authority.organisationId !== owner.organisationId ||
       this.serverSlug() !== owner.serverSlug ||
-      espaceSessionFor(owner.serverSlug) !== session
+      espaceSessionFor(owner.serverSlug) !== owner.session
     )
   }
   private accepted(): boolean {
@@ -692,8 +705,9 @@ export class DraftMemory {
       this.retire(this.owner !== null && this.terminal(this.owner))
     }
   }
-  accept(authority: Authority) {
+  accept(authority: Authority, tenantSlugFor?: (organisationId: string) => string | undefined) {
     this.authority = authority
+    if (tenantSlugFor !== undefined) this.tenantSlugFor = tenantSlugFor
     if (this.owner !== null && this.terminal(this.owner)) this.retire()
     else {
       if (this.owner === null) this.viewEpoch += 1
@@ -707,7 +721,13 @@ export class DraftMemory {
         !this.person(session, workspace.organisation_id) ||
         (store !== undefined && store.getUserId() !== this.owner.userId))
     )
-      this.retire()
+      this.retire(
+        true,
+        !this.person(session, workspace.organisation_id) &&
+          workspace.organisation_id === this.authority.organisationId
+          ? true
+          : store !== undefined && store.getUserId() !== this.owner.userId
+      )
   }
   attachView(
     store: EspaceStoreLike,
@@ -907,8 +927,8 @@ export function EspaceDraftProvider({
   const [memory] = useState(() => new DraftMemory(lifetime, authority, tenantSlugFor))
   useLayoutEffect(() => memory.connect(), [memory])
   useLayoutEffect(() => {
-    memory.accept(authority)
-  }, [memory, authority])
+    memory.accept(authority, tenantSlugFor)
+  }, [memory, authority, tenantSlugFor])
   // Local demo stores own their drafts and never acquire a Matrix transport lease.
   // Registration comes exclusively from the mock browser bootstrap for this organisation.
   return (
