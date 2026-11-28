@@ -586,6 +586,222 @@
     }
   }
 }
+/* Landing-coherent architectural stage (`KoderaStageMark`): subtle dark-mode grain, corner reticle
+   ticks, and staggered seven-chevron blade ignition shared across session loading, OIDC/Matrix
+   callbacks, workspace opening, and standalone recovery/404 screens. Zero inline hex or colour
+   functions: every value comes from `@kodera/design-tokens`. */
+@layer components {
+  .kodera-stage {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .kodera-stage-screen {
+    @apply flex min-h-screen flex-col items-center justify-center gap-5 p-6 text-center;
+  }
+
+  .kodera-stage-pane {
+    @apply flex flex-1 flex-col items-center justify-center gap-4 py-12 text-center;
+  }
+
+  :root:where(:not([data-theme='light'], [data-theme='ciel'])) .kodera-stage::before,
+  [data-theme='dark'] .kodera-stage::before,
+  [data-theme='black'] .kodera-stage::before,
+  [data-theme='ciel-nuit'] .kodera-stage::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: url('/grain-64.webp');
+    background-repeat: repeat;
+    background-size: calc(2 * var(--sp-8)) calc(2 * var(--sp-8));
+    opacity: 0.035;
+  }
+
+  .stage-reticle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(2 * var(--sp-10));
+    height: calc(2 * var(--sp-10));
+    color: var(--c-ink);
+  }
+
+  .stage-reticle::before,
+  .stage-reticle::after,
+  .stage-corners::before,
+  .stage-corners::after {
+    content: '';
+    position: absolute;
+    width: var(--sp-3);
+    height: var(--sp-3);
+    pointer-events: none;
+    border-color: var(--c-border-strong);
+  }
+
+  .stage-reticle::before {
+    top: 0;
+    left: 0;
+    border-top: 1px solid var(--c-border-strong);
+    border-left: 1px solid var(--c-border-strong);
+  }
+
+  .stage-reticle::after {
+    top: 0;
+    right: 0;
+    border-top: 1px solid var(--c-border-strong);
+    border-right: 1px solid var(--c-border-strong);
+  }
+
+  .stage-corners {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .stage-corners::before {
+    bottom: 0;
+    left: 0;
+    border-bottom: 1px solid var(--c-border-strong);
+    border-left: 1px solid var(--c-border-strong);
+  }
+
+  .stage-corners::after {
+    right: 0;
+    bottom: 0;
+    border-right: 1px solid var(--c-border-strong);
+    border-bottom: 1px solid var(--c-border-strong);
+  }
+
+  .stage-mark {
+    height: var(--sp-10);
+    width: auto;
+  }
+
+  .stage-emblem-box::after {
+    content: '';
+    display: block;
+    width: var(--sp-8);
+    height: var(--sp-10);
+    background-color: currentcolor;
+    -webkit-mask-image: url('/kodera-mark-slate.svg');
+    mask-image: url('/kodera-mark-slate.svg');
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+  }
+
+  .stage-emblem-box {
+    background:
+      linear-gradient(var(--c-border-strong), var(--c-border-strong)) 0 100% / var(--sp-3) 1px
+        no-repeat,
+      linear-gradient(var(--c-border-strong), var(--c-border-strong)) 0 100% / 1px var(--sp-3)
+        no-repeat,
+      linear-gradient(var(--c-border-strong), var(--c-border-strong)) 100% 100% / var(--sp-3) 1px
+        no-repeat,
+      linear-gradient(var(--c-border-strong), var(--c-border-strong)) 100% 100% / 1px var(--sp-3)
+        no-repeat;
+  }
+  .stage-emblem-box::after {
+    position: static;
+    border: 0;
+  }
+
+  .stage-status {
+    @apply font-mono text-xs font-medium text-c-ink-3 uppercase;
+  }
+
+  .stage-status-err {
+    @apply max-w-shell-document-min-width text-sm text-c-ink-3;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .kodera-mark-on > path {
+      opacity: 0.14;
+      animation: kodera-blade-ignite var(--dur-slow) var(--ease-out) forwards;
+    }
+    .kodera-mark-on > path:nth-child(1) {
+      animation-delay: 80ms;
+    }
+    .kodera-mark-on > path:nth-child(2) {
+      animation-delay: 190ms;
+    }
+    .kodera-mark-on > path:nth-child(3) {
+      animation-delay: 300ms;
+    }
+    .kodera-mark-on > path:nth-child(4) {
+      animation-delay: 410ms;
+    }
+    .kodera-mark-on > path:nth-child(5) {
+      animation-delay: 520ms;
+    }
+    .kodera-mark-on > path:nth-child(6) {
+      animation-delay: 630ms;
+    }
+    .kodera-mark-on > path:nth-child(7) {
+      animation-delay: 740ms;
+    }
+    .stage-emblem-on {
+      animation: kodera-emblem-ignite var(--spring-bouncy-duration) var(--ease-out) both;
+    }
+    .stage-status-on {
+      animation: kodera-status-on var(--dur-slow) var(--ease-out) var(--dur-fast) both;
+    }
+    @keyframes kodera-emblem-ignite {
+      0% {
+        opacity: 0.16;
+        clip-path: inset(82% 0 0 0);
+      }
+      55% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+        filter: drop-shadow(0 0 var(--sp-2) var(--noir-sky));
+      }
+      100% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+        filter: none;
+      }
+    }
+    @keyframes kodera-blade-ignite {
+      0% {
+        opacity: 0.14;
+      }
+      45% {
+        opacity: 1;
+        filter: drop-shadow(0 0 var(--sp-2) var(--noir-sky));
+      }
+      100% {
+        opacity: 1;
+        filter: none;
+      }
+    }
+    @keyframes kodera-status-on {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .kodera-mark-on > path,
+    .stage-emblem-on {
+      opacity: 1;
+      clip-path: none;
+      animation: none;
+      filter: none;
+    }
+  }
+}
+
 /* Motion changes only composited properties and follows the person's preference. */
 @media (prefers-reduced-motion: no-preference) {
   .tactile {

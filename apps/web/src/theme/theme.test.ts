@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultTheme, themeIds, themes } from '@kodera/design-tokens/themes'
+import { isDevelopmentAsset } from '../mocks/browser'
 import {
   LEGACY_THEME_IDS,
   THEME_CHANGE_EVENT,
@@ -13,6 +15,8 @@ import {
   readThemePreference,
   saveThemePreference,
 } from './theme'
+
+import { buildInitialGroundCss } from '../../scripts/vite/initialGroundCss'
 
 const ROOT = join(import.meta.dirname, '..', '..')
 const BOOT = readFileSync(join(ROOT, 'public', 'theme.js'), 'utf8')
@@ -179,6 +183,45 @@ describe('public/theme.js', () => {
     expect(page.root.dataset.theme).toBe('black')
     // The theme is never an inline style: `style-src-attr 'none'` stays satisfied.
     expect(BOOT).not.toMatch(/\.style\b|setAttribute\(\s*['"]style/)
+  })
+
+  it('generates @layer theme ground CSS from @kodera/design-tokens for all 5 themes with zero hex in public/theme.js', () => {
+    const tokensCss = readFileSync(
+      createRequire(import.meta.url).resolve('@kodera/design-tokens/tokens.css'),
+      'utf8'
+    )
+    const tokenOf = (name: string): string => {
+      const match = new RegExp(`--${name}:\\s*([^;]+);`).exec(tokensCss)
+      return match?.[1]?.trim() ?? ''
+    }
+    const groundCss = buildInitialGroundCss()
+    expect(BOOT).not.toMatch(/#[0-9A-Fa-f]{3,8}\b/)
+    expect(groundCss).toContain('@layer theme{')
+    expect(groundCss).toContain(
+      `:root:not([data-theme]) body,[data-theme="dark"] body{background:${tokenOf('theme-dark-page')}}`
+    )
+    expect(groundCss).toContain(
+      `@media(prefers-color-scheme:light){:root:not([data-theme]) body{background:${tokenOf('theme-light-page')}}}`
+    )
+    for (const id of themeIds) {
+      const page = tokenOf(`theme-${id}-page`)
+      expect(page, `${id} page`).not.toBe('')
+      expect(groundCss).toContain(
+        id === 'dark'
+          ? `:root:not([data-theme]) body,[data-theme="dark"] body{background:${page}}`
+          : `[data-theme="${id}"] body{background:${page}}`
+      )
+    }
+  })
+
+  it('admits /grain-64.webp in the strict development asset allowlist', () => {
+    expect(
+      isDevelopmentAsset(
+        new Request('http://localhost:5173/grain-64.webp'),
+        'http://localhost:5173',
+        true
+      )
+    ).toBe(true)
   })
 
   it('re-applies on the change this module announces and on another tab’s choice', () => {

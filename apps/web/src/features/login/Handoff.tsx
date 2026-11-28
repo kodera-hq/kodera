@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { authAdapter } from '../../auth/oidc'
 import { Button } from '../../ui/Button/Button'
 import { Card, CardBody } from '../../ui/Card/Card'
-import { Spinner } from '../../ui/Spinner/Spinner'
+import { KoderaStageEmblem } from '../../ui/StageFrame/KoderaStageEmblem'
 
 export interface HandoffProps {
   realm: string
@@ -33,10 +33,10 @@ export function Handoff({ realm, organisationName }: HandoffProps) {
   }, [realm])
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-6 narrow:p-4">
-      <Card className="w-full max-w-[420px] text-center">
+    <main className="kodera-stage flex min-h-screen items-center justify-center p-6 narrow:p-4">
+      <Card className="w-full max-w-shell-document-min-width text-center">
         <CardBody className="flex flex-col items-center gap-4">
-          <Spinner size="lg" />
+          <KoderaStageEmblem animated={!blocked} />
           {/* One live region, polite (§10): the redirect message and, once it
               is stale, the blocked-redirect explanation share it rather than
               competing for attention. */}

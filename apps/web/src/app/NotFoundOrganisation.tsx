@@ -13,32 +13,24 @@ import { HomeRecovery } from './HomeRecovery'
 
 import { useEffect } from 'react'
 import { forgetSharedRealmSlug } from '../auth/sharedRealmHints'
-import { useMatches, useParams } from '@tanstack/react-router'
+import { useParams } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-
-/** `orgRoute`'s id, spelled rather than imported: `org-route.tsx` imports
- * this module. */
-const ORG_ROUTE_ID = '/$org'
+import { StageContainer, useInOrgShell } from '../ui/StageFrame/KoderaStageEmblem'
 
 export function NotFoundOrganisation() {
   const { t } = useTranslation()
   const { org } = useParams({ strict: false })
-  // The shell is on screen only when the organisation layout itself loaded.
-  const inShell = useMatches({
-    select: (matches) =>
-      matches.some((match) => match.routeId === ORG_ROUTE_ID && match.status === 'success'),
-  })
+  const inShell = useInOrgShell()
   useEffect(() => {
     if (!inShell && typeof org === 'string') forgetSharedRealmSlug(org)
   }, [inShell, org])
-  const Frame = inShell ? 'div' : 'main'
   return (
-    <Frame className="flex min-h-screen flex-col items-center justify-center gap-3 p-6 text-center">
+    <StageContainer inShell={inShell}>
       <h1 className="text-lg font-semibold text-c-ink">{t('console.common.title-not-found')}</h1>
-      <p className="max-w-[320px] text-sm text-c-ink-3">
+      <p className="max-w-shell-dock-width text-sm text-c-ink-3">
         {t('console.common.body-not-found-organisation')}
       </p>
       <HomeRecovery />
-    </Frame>
+    </StageContainer>
   )
 }

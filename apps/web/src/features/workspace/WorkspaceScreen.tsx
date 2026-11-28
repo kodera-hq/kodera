@@ -72,6 +72,7 @@ import { Button } from '../../ui/Button/Button'
 import { Drawer } from '../../ui/Drawer/Drawer'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
+import { KoderaStageMark } from '../../ui/StageFrame/KoderaStageMark'
 import { DocsWorkspacePanel } from '../docs/DocsWorkspacePanel'
 import { EspaceLiveView } from '../espace/EspaceLiveView'
 import { homeserverSlugFor } from '../espace/homeserver'
@@ -116,15 +117,17 @@ const STATE_TITLE: Record<WorkspaceView['kind'], MessageKey> = {
 
 function LoadingState() {
   const { t } = useTranslation()
+  const label = t('console.common.a11y-loading')
   return (
     <div className="flex min-h-0 flex-1">
       <div className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 border-r border-c-border-soft p-3 narrow:hidden">
-        <Skeleton shape="block" label={t('console.common.a11y-loading')} />
+        <Skeleton shape="block" label={label} />
         <Skeleton shape="text" />
         <Skeleton shape="text" />
       </div>
-      <div className="flex flex-1 flex-col gap-3 px-6 py-5 narrow:p-0">
-        <Skeleton shape="block" />
+      <div className="kodera-stage flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center narrow:p-6">
+        <KoderaStageMark animated />
+        <p className="stage-status stage-status-on">{label}</p>
       </div>
     </div>
   )
@@ -133,7 +136,8 @@ function LoadingState() {
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   const { t } = useTranslation()
   return (
-    <section className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center narrow:px-0">
+    <section className="kodera-stage flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center narrow:px-0">
+      <KoderaStageMark />
       <h1 className="text-lg font-semibold text-c-ink">{t('console.workspace._.title')}</h1>
       <InlineAlert kind="error" className="max-w-[420px] text-left">
         {t('console.common.error-unavailable')}
@@ -283,8 +287,15 @@ function ReadyWorkspace({
         ) : null}
         {offered ? <OpenEspaceProblem entry={espace} /> : null}
         {preparing || (channel === null && !offered) ? null : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 py-12">
-            <p className="max-w-[320px] text-center text-sm text-c-ink-3">
+          <div className="kodera-stage flex flex-1 flex-col items-center justify-center gap-5 py-12">
+            <KoderaStageMark animated={opening} />
+            <p
+              className={
+                opening
+                  ? 'stage-status stage-status-on max-w-shell-dock-width text-center'
+                  : 'max-w-shell-dock-width text-center text-sm text-c-ink-3'
+              }
+            >
               {t(
                 !offered
                   ? 'console.workspace.channel.body-empty'

@@ -7,14 +7,16 @@
  * file would vanish in the other two. Decoration — `aria-hidden` — beside the
  * organisation's name.
  */
-export function KoderaMark({ className }: { className?: string }) {
+export function KoderaMark({
+  className,
+  animated,
+}: {
+  className?: string | undefined
+  animated?: boolean | undefined
+}) {
+  const cls = animated ? (className ? `${className} kodera-mark-on` : 'kodera-mark-on') : className
   return (
-    <svg
-      viewBox="0 0 463 608.663"
-      fill="currentColor"
-      aria-hidden="true"
-      {...(className === undefined ? {} : { className })}
-    >
+    <svg viewBox="0 0 463 608.663" fill="currentColor" aria-hidden="true" className={cls}>
       <path d="M431.788 580.051L460.4 551.438L383.407 474.445L306.934 397.972L277.281 428.145L247.108 457.798L322.541 533.23C364.159 574.848 399.014 608.663 400.575 608.663C402.135 608.663 416.181 595.657 431.788 580.051Z" />
       <path d="M176.876 493.173L288.725 380.284L260.112 349.071L231.5 317.337L117.05 431.787L2.60098 546.236L33.8145 576.409L65.028 606.062L176.876 493.173Z" />
       <path d="M261.675 568.085L291.328 537.912L260.115 507.219L228.901 476.526L197.688 507.219L166.474 537.912L196.127 568.085C212.774 584.733 227.34 598.258 228.901 598.258C230.462 598.258 245.028 584.733 261.675 568.085Z" />

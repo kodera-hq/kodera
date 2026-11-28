@@ -36,10 +36,9 @@ import { isConfiguredEuTelemetry } from '../analytics/telemetry/policy'
 // The heading takes focus when the screen appears, and the message is an
 // `alert`, so a screen-reader user hears what happened without hunting for it.
 
-import { useMatches, useParams, useRouter } from '@tanstack/react-router'
+import { useParams, useRouter } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiProblem } from '../api/client'
 import { isOrganisationSlug } from '../api/organisationSlug'
@@ -49,8 +48,12 @@ import { authAdapter } from '../auth/oidc'
 import { useAuth } from '../auth/AuthProvider'
 import { useReauthenticate } from '../auth/sessionExpiry'
 import { rememberReturnTo } from '../auth/return-to'
-import { TextButton as Button } from '../ui/Button/TextButton'
-import { LinkButton } from '../ui/LinkButton/LinkButton'
+import {
+  StageButton as Button,
+  StageContainer,
+  StageSecondaryLink,
+  useInOrgShell,
+} from '../ui/StageFrame/KoderaStageEmblem'
 import {
   clearReauthenticationFromError,
   markReauthenticationFromError,
@@ -62,10 +65,6 @@ const UNAUTHENTICATED = 'https://kodera.io/problems/unauthenticated'
 /** Typed against the generated registry, so a contract that dropped the type
  * fails the typecheck here instead of leaving a branch nothing can reach. */
 const IDENTITY_UNKNOWN: ProblemType = 'https://kodera.io/problems/identity-unknown'
-
-/** `orgRoute`'s id, spelled rather than imported: `org-route.tsx` imports
- * this module, and the id is all the layout choice needs. */
-const ORG_ROUTE_ID = '/$org'
 
 export function isUnauthenticated(error: unknown): boolean {
   return error instanceof ApiProblem && (error.type === UNAUTHENTICATED || error.status === 401)
@@ -96,16 +95,40 @@ function Message({ title, body }: { title: string; body: string }) {
   )
 }
 
-function Actions({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center justify-center gap-3">{children}</div>
-}
+const ACTIONS_CLS = 'flex flex-wrap items-center justify-center gap-3'
 
-function ContactSupport() {
+function SignOutRecovery({
+  title,
+  body,
+  clearLoop,
+}: {
+  title: string
+  body: string
+  clearLoop?: boolean
+}) {
   const { t } = useTranslation()
+  const auth = useAuth()
+  const router = useRouter()
   return (
-    <LinkButton variant="secondary" href={`mailto:${SUPPORT_EMAIL}`}>
-      {t('console.common.action-contact-support')}
-    </LinkButton>
+    <>
+      <Message title={title} body={body} />
+      <div className={ACTIONS_CLS}>
+        <Button
+          onClick={() => {
+            if (clearLoop) clearReauthenticationFromError()
+            void auth
+              .signOut()
+              .catch(() => {})
+              .then(() => router.navigate({ to: '/login' }))
+          }}
+        >
+          {t('console.shell.session.action-sign-out')}
+        </Button>
+        <StageSecondaryLink href={`mailto:${SUPPORT_EMAIL}`}>
+          {t('console.common.action-contact-support')}
+        </StageSecondaryLink>
+      </div>
+    </>
   )
 }
 
@@ -135,31 +158,15 @@ function SessionExpiredContent() {
       mountedRef.current = false
     }
   }, [])
-  // Read once: the answer is about how this screen was reached.
   const [restoreFailed] = useState(reauthenticationFromErrorPending)
 
   if (restoreFailed) {
     return (
-      <>
-        <Message
-          title={t('console.shell.session.title-restore-failed')}
-          body={t('console.shell.session.body-restore-failed', { email: SUPPORT_EMAIL })}
-        />
-        <Actions>
-          <Button
-            onClick={() => {
-              clearReauthenticationFromError()
-              void auth
-                .signOut()
-                .catch(() => {})
-                .then(() => router.navigate({ to: '/login' }))
-            }}
-          >
-            {t('console.shell.session.action-sign-out')}
-          </Button>
-          <ContactSupport />
-        </Actions>
-      </>
+      <SignOutRecovery
+        title={t('console.shell.session.title-restore-failed')}
+        body={t('console.shell.session.body-restore-failed', { email: SUPPORT_EMAIL })}
+        clearLoop
+      />
     )
   }
 
@@ -169,7 +176,7 @@ function SessionExpiredContent() {
         title={t('console.shell.session.title-unrecognized')}
         body={t('console.shell.session.body-unrecognized')}
       />
-      <Actions>
+      <div className={ACTIONS_CLS}>
         <Button
           disabled={pending}
           onClick={() => {
@@ -228,40 +235,7 @@ function SessionExpiredContent() {
         >
           {t('console.shell.session.action-sign-in-again')}
         </Button>
-      </Actions>
-    </>
-  )
-}
-
-function NoOrganisationContent() {
-  const { t } = useTranslation()
-  const auth = useAuth()
-  const router = useRouter()
-  return (
-    <>
-      <Message
-        title={t('console.shell.session.title-no-organisation')}
-        body={t('console.shell.session.body-no-organisation')}
-      />
-      <Actions>
-        <Button
-          onClick={() => {
-            // Sign-out is local today: it drops this browser's tokens and
-            // session keys (the loop marker included) and goes to `/login`,
-            // but it does not end the identity provider's session, so it
-            // does not by itself lead to another account. The person's next
-            // step is to ask an owner of the organisation to add them, or to
-            // write to support; signing in again would bring the same answer.
-            void auth
-              .signOut()
-              .catch(() => {})
-              .then(() => router.navigate({ to: '/login' }))
-          }}
-        >
-          {t('console.shell.session.action-sign-out')}
-        </Button>
-        <ContactSupport />
-      </Actions>
+      </div>
     </>
   )
 }
@@ -276,24 +250,24 @@ function LoadFailedContent({ error, reset }: ErrorComponentProps) {
         title={t('console.shell._.title-load-failed')}
         body={t('console.shell._.body-load-failed', { email: SUPPORT_EMAIL })}
       />
-      {requestId === undefined ? null : (
+      {requestId && (
         <p className="font-mono text-xs text-c-ink-3">
           {t('console.common.label-request-reference', { requestId })}
         </p>
       )}
-      <Actions>
+      <div className={ACTIONS_CLS}>
         <Button
           onClick={() => {
-            // `invalidate` re-runs the failed loader; `reset` clears the
-            // boundary so a render error gets its second try as well.
             reset()
             void router.invalidate()
           }}
         >
           {t('console.common.action-retry')}
         </Button>
-        <ContactSupport />
-      </Actions>
+        <StageSecondaryLink href={`mailto:${SUPPORT_EMAIL}`}>
+          {t('console.common.action-contact-support')}
+        </StageSecondaryLink>
+      </div>
     </>
   )
 }
@@ -306,29 +280,20 @@ export function notifyRouteError(): void {
 }
 
 export function RouteError(props: ErrorComponentProps) {
+  const { t } = useTranslation()
   useEffect(() => {
     notifyRouteError()
   }, [props.error])
-  // The shell is on screen only when the organisation layout itself loaded;
-  // its own failure, and every route outside it, get the whole page.
-  const inShell = useMatches({
-    select: (matches) =>
-      matches.some((match) => match.routeId === ORG_ROUTE_ID && match.status === 'success'),
-  })
+  const inShell = useInOrgShell()
   const content = isIdentityUnknown(props.error) ? (
-    <NoOrganisationContent />
+    <SignOutRecovery
+      title={t('console.shell.session.title-no-organisation')}
+      body={t('console.shell.session.body-no-organisation')}
+    />
   ) : isUnauthenticated(props.error) ? (
     <SessionExpiredContent />
   ) : (
     <LoadFailedContent {...props} />
   )
-  return inShell ? (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 py-12 text-center">
-      {content}
-    </div>
-  ) : (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-      {content}
-    </main>
-  )
+  return <StageContainer inShell={inShell}>{content}</StageContainer>
 }

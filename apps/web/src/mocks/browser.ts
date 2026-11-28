@@ -139,9 +139,14 @@ export function isDevelopmentAsset(
   return (
     url.pathname === '/@react-refresh' ||
     url.pathname === '/@vite/client' ||
-    ['/theme.js', '/favicon.svg', '/favicon.ico', '/site.webmanifest', '/llms.txt'].includes(
-      url.pathname
-    ) ||
+    [
+      '/theme.js',
+      '/favicon.svg',
+      '/favicon.ico',
+      '/site.webmanifest',
+      '/llms.txt',
+      '/grain-64.webp',
+    ].includes(url.pathname) ||
     /^\/(?:icon-(?:16|32|48|180|192|512|512-maskable)\.png|kodera-(?:mark|lockup)-(?:white|slate)\.svg)$/.test(
       url.pathname
     ) ||

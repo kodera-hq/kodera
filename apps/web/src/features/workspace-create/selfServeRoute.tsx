@@ -79,7 +79,7 @@ function SelfServeWorkspaceScreen() {
   if (communityHandoff) return <Handoff realm="community" organisationName="Kodera Community" />
   const initialPlan: SelfServePlanChoice = search.plan === 'sovereign' ? 'sovereign' : 'freemium'
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-shell-document-max-width flex-col justify-center px-6 py-12">
+    <main className="kodera-stage mx-auto flex min-h-screen w-full max-w-shell-document-max-width flex-col justify-center px-6 py-12">
       <SelfServeCreateWorkspace
         initialPlan={initialPlan}
         existingSovereignOrgSlug={existingSovereignOrgSlug}

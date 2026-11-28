@@ -39,13 +39,11 @@ export const indexRoute = createRoute({
       throw new DOMException('Credential authority ended.', 'AbortError')
     const demoRealm =
       current.user?.realm && isDemoActive(current.user.realm) ? current.user.realm : 'community'
+    const bySlug = (slug: string) =>
+      me.organisations.find(({ organisation }) => organisation.slug === slug)
     const first =
-      (onCommunityHost()
-        ? me.organisations.find(({ organisation }) => organisation.slug === 'community')
-        : undefined) ??
-      (isDemoActive(demoRealm)
-        ? me.organisations.find(({ organisation }) => organisation.slug === demoRealm)
-        : undefined) ??
+      (onCommunityHost() ? bySlug('community') : undefined) ??
+      (isDemoActive(demoRealm) ? bySlug(demoRealm) : undefined) ??
       me.organisations[0]
     if (first === undefined) {
       throw redirect({ to: '/login' })

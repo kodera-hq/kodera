@@ -4,11 +4,24 @@
 // (docs/specs/12-invitation-accept.md §3).
 import type { BootEntry } from './main'
 
+declare const __KODERA_INITIAL_GROUND_CSS__: string
+
+function adoptInitialGround(): void {
+  if (parent !== window) return
+  try {
+    const ground = new CSSStyleSheet()
+    ground.replaceSync(__KODERA_INITIAL_GROUND_CSS__)
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, ground]
+  } catch {
+    // Fallback to `color-scheme` and `index.css`.
+  }
+}
+
 const claimEnvelopeKey = 'kodera.owner-claim.entry.v1'
-const claimPath =
-  /^\/claim\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([a-z0-9-]{1,64})$/
-const invitationPath =
-  /^\/invitations\/accept\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([a-z0-9-]{1,64})$/
+const slugTail =
+  '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\/([a-z0-9-]{1,64})$'
+const claimPath = new RegExp(`^\\/claim\\/${slugTail}`)
+const invitationPath = new RegExp(`^\\/invitations\\/accept\\/${slugTail}`)
 const isInvitationEntry = (path: string): boolean =>
   path === '/invitations/accept' || path.startsWith('/invitations/accept/')
 
@@ -63,6 +76,30 @@ function appBaseUrl(): URL {
   return new URL(import.meta.env.BASE_URL, location.href)
 }
 
+const KNOWN_THEMES = ['light', 'dark', 'black', 'ciel', 'ciel-nuit']
+
+function applySavedOrDeviceTheme(): void {
+  if (parent !== window) return
+  let theme: string | null = null
+  try {
+    theme = localStorage.getItem('console:theme')
+  } catch {
+    // Follow device.
+  }
+  if (!theme || !KNOWN_THEMES.includes(theme)) {
+    theme = 'dark'
+    try {
+      if (!matchMedia('(prefers-color-scheme: dark)').matches) theme = 'light'
+    } catch {
+      // Follow Dark Precision.
+    }
+  }
+  document.documentElement.dataset.theme = theme
+  document
+    .querySelector('meta[name="color-scheme"]')
+    ?.setAttribute('content', theme === 'light' || theme === 'ciel' ? 'light' : 'dark')
+}
+
 async function releaseOrdinaryPage(entry?: BootEntry): Promise<void> {
   const head = document.getElementById('entry-page-head')
   if (!(head instanceof HTMLTemplateElement)) throw Error('ENTRY_HEAD_MARKUP_MISSING')
@@ -70,13 +107,21 @@ async function releaseOrdinaryPage(entry?: BootEntry): Promise<void> {
     const theme = document.createElement('script')
     theme.src = new URL('theme.js', appBaseUrl()).href
     theme.async = false
-    theme.addEventListener('load', () => resolve(), { once: true })
-    theme.addEventListener('error', () => reject(Error('ENTRY_THEME_LOAD_FAILED')), { once: true })
+    theme.onload = () => resolve()
+    theme.onerror = () => reject(Error('ENTRY_THEME_LOAD_FAILED'))
     document.head.append(theme)
   })
   document.head.append(head.content.cloneNode(true))
   const { boot } = await import('./main')
   await boot(entry)
+}
+
+async function runOrdinaryPage(entry?: BootEntry): Promise<void> {
+  try {
+    await releaseOrdinaryPage(entry)
+  } catch {
+    showRecovery()
+  }
 }
 
 /** Retires only the old simulation worker; unrelated workers and real OIDC state survive. */
@@ -95,10 +140,8 @@ export async function retireLegacyWorker(): Promise<'ready' | 'reload' | 'blocke
   const service = opaqueOrigin ? undefined : navigator.serviceWorker
   const controlled = legacy(service?.controller)
   try {
-    const keys = Array.from({ length: sessionStorage.length }, (_, index) =>
-      sessionStorage.key(index)
-    )
-    for (const key of keys) {
+    for (let i = sessionStorage.length; i-- > 0;) {
+      const key = sessionStorage.key(i)
       if (key?.startsWith('msw:') || key?.startsWith('kodera.demo.')) sessionStorage.removeItem(key)
     }
     if (service) {
@@ -127,6 +170,8 @@ export async function retireLegacyWorker(): Promise<'ready' | 'reload' | 'blocke
 }
 
 async function startEntry(): Promise<void> {
+  adoptInitialGround()
+  applySavedOrDeviceTheme()
   if (import.meta.env.VITE_AUTH_MODE === 'oidc' || import.meta.env.VITE_ENABLE_MSW !== '1') {
     const retirement = await retireLegacyWorker()
     if (retirement === 'reload') return
@@ -194,11 +239,7 @@ async function startEntry(): Promise<void> {
       return
     }
     if (path === '/auth/claim-callback') {
-      try {
-        await releaseOrdinaryPage({ kind: 'claim-callback' })
-      } catch {
-        showRecovery()
-      }
+      await runOrdinaryPage({ kind: 'claim-callback' })
       return
     }
     showRecovery()
@@ -221,11 +262,7 @@ async function startEntry(): Promise<void> {
     }
     // eslint-disable-next-line no-useless-assignment -- Only the admitted entry retains the secret across the await.
     secret = ''
-    try {
-      await releaseOrdinaryPage(entry)
-    } catch {
-      showRecovery()
-    }
+    await runOrdinaryPage(entry)
     return
   }
   if (protectedClaim) {
@@ -244,18 +281,10 @@ async function startEntry(): Promise<void> {
     }
     // eslint-disable-next-line no-useless-assignment -- Only the admitted entry retains the secret across the await.
     secret = ''
-    try {
-      await releaseOrdinaryPage(entry)
-    } catch {
-      showRecovery()
-    }
+    await runOrdinaryPage(entry)
     return
   }
-  try {
-    await releaseOrdinaryPage()
-  } catch {
-    showRecovery()
-  }
+  await runOrdinaryPage()
 }
 
 void startEntry()
