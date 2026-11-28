@@ -818,7 +818,7 @@ def _create_link(request: HttpRequest, invoice_id: UUID, request_id: str) -> Htt
                 body = _malformed_field(request_id, "/return_url", "origin")
             except ReturnUrlRequiredError:
                 body = _malformed_field(request_id, "/return_url", "required")
-        return respond_once(
+        replayed = respond_once(
             request,
             issuer=verified.issuer,
             subject=verified.subject,
@@ -827,6 +827,46 @@ def _create_link(request: HttpRequest, invoice_id: UUID, request_id: str) -> Htt
                 invoice_id, organisation_id, verified, body, issued, request_id
             ),
         )
+        if replayed.status_code == 201:
+            try:
+                payload = json.loads(replayed.content)
+            except ValueError:
+                payload = None
+            cached_url = payload.get("url") if isinstance(payload, dict) else None
+            from apps.billing.payments.services import (
+                expected_stripe_binding,
+                link_matches_runtime_binding,
+            )
+
+            expected_binding = expected_stripe_binding()
+            row = (
+                payments.PaymentLink.objects.filter(
+                    organisation_id=organisation_id,
+                    invoice_id=invoice_id,
+                    url=cached_url,
+                )
+                .only("provider", "state", "stripe_account_id", "stripe_livemode")
+                .order_by("-created_at")
+                .first()
+                if isinstance(cached_url, str) and cached_url
+                else None
+            )
+            if (row is not None and not link_matches_runtime_binding(row)) or (
+                row is None and expected_binding != (None, None)
+            ):
+                conflict_body = {
+                    "type": PROBLEM_BASE + "conflict",
+                    "title": "Conflict",
+                    "status": 409,
+                    "request_id": request_id,
+                    "detail": "The previously issued payment link belongs to a retired or unverifiable payment platform binding.",
+                }
+                return HttpResponse(
+                    json.dumps(conflict_body),
+                    status=409,
+                    content_type="application/problem+json",
+                )
+        return replayed
     finally:
         if issued is not None:
             payments.withdraw_unrecorded(issued)

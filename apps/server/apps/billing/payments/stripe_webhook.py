@@ -8,9 +8,11 @@ so re-delivered webhooks return `200` without double-applying state mutations.
 Under the G4 & H3.1 commercial architecture (`mode=payment`, Core = sole Factur-X EN 16931 invoice
 and credit-note authority for B2B subscriptions and Volet A community boosts; Stripe Connect
 destination split for Volet B VIP passes), the public HTTP ingress enforces an explicit pinned
-`api_version` allowlist (`2024-06-20` and `2024-12-18.acacia`), failing closed (`400`) before
-database writes on missing or unrecognized versions. Every non-collection event type is recorded as
-`ignored_event_type` with zero mutations to Core billing, dunning, or workspace quota tables.
+`api_version` allowlist (`2024-06-20`, `2024-12-18.acacia`, and `2025-02-24.acacia`), failing
+closed (`400`) before database writes on missing or unrecognized versions. Every non-collection
+event type is recorded as `ignored_event_type` (and any event tagged with a foreign
+`metadata[samourai_project]` != `kodera` is recorded as `ignored`) with zero mutations to Core
+billing, dunning, or workspace quota tables.
 """
 
 from __future__ import annotations
@@ -50,11 +52,20 @@ from ..services import credit_note_series, set_invoice_state
 from ..states import PAYMENT_TRANSITIONS, SUBSCRIPTION_TRANSITIONS
 from .port import ProviderEvent as PortEvent
 from .services import (
+    connect_checkout_binding_matches_runtime,
+    direct_checkout_binding_matches_runtime,
     effective_owed_minor,
+    expected_stripe_binding,
     reconcile,
     subscription_has_blocking_unpaid_invoice,
 )
-from .stripe import API_VERSION, SIGNATURE_HEADER, TOLERANCE_S, _translate as translate_port_event
+from .stripe import (
+    SIGNATURE_HEADER,
+    SUPPORTED_EVENT_API_VERSIONS,
+    TOLERANCE_S,
+    _translate as translate_port_event,
+    is_foreign_samourai_project,
+)
 
 MAX_WEBHOOK_BYTES = 65_536
 MAX_DEFERRED_STRIPE_REFUNDS = 10_000
@@ -63,12 +74,7 @@ SYSTEM = Actor("system", None)
 _HEX_DIGEST_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 _EVENT_ID_RE = re.compile(r"[A-Za-z0-9_-]{3,255}\Z")
 _EVENT_TYPE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,127}\Z")
-ALLOWED_STRIPE_API_VERSIONS: frozenset[str] = frozenset(
-    {
-        API_VERSION,
-        "2024-12-18.acacia",
-    }
-)
+ALLOWED_STRIPE_API_VERSIONS: frozenset[str] = SUPPORTED_EVENT_API_VERSIONS
 G4_COLLECTION_EVENTS = frozenset(
     {
         "checkout.session.completed",
@@ -185,7 +191,7 @@ def verify_stripe_signature(
 
 def _parse_event_envelope(
     raw_body: bytes,
-) -> tuple[str, str, bool, datetime, dict[str, Any]]:
+) -> tuple[str, str, bool, bool, datetime, dict[str, Any]]:
     try:
         decoded = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -197,7 +203,8 @@ def _parse_event_envelope(
     event_type = decoded.get("type")
     api_version = decoded.get("api_version")
     created = decoded.get("created")
-    livemode = decoded.get("livemode", False)
+    has_livemode = "livemode" in decoded
+    livemode = decoded["livemode"] if has_livemode else False
     data = decoded.get("data")
     if (
         not isinstance(event_id, str)
@@ -221,7 +228,19 @@ def _parse_event_envelope(
         occurred_at = datetime.fromtimestamp(created, UTC)
     except (OverflowError, OSError, ValueError) as exc:
         raise StripeWebhookMalformedError("invalid-event-timestamp") from exc
-    return event_id, event_type, livemode, occurred_at, obj
+    return event_id, event_type, livemode, has_livemode, occurred_at, obj
+
+
+def _verify_expected_livemode(*, livemode: bool, has_livemode: bool) -> None:
+    expected_livemode = getattr(settings, "KODERA_STRIPE_EXPECTED_LIVEMODE", None)
+    if expected_livemode is None:
+        return
+    if not isinstance(expected_livemode, bool):
+        raise StripeWebhookSecretMissingError()
+    if not has_livemode:
+        raise StripeWebhookMalformedError("missing-livemode")
+    if livemode is not expected_livemode:
+        raise StripeWebhookSignatureError("livemode-mismatch")
 
 
 def _extract_uuid(mapping: Mapping[str, Any] | None, *keys: str) -> UUID | None:
@@ -252,6 +271,11 @@ def _metadata_of(data_obj: Mapping[str, Any]) -> Mapping[str, Any]:
     if isinstance(meta, Mapping):
         return meta
     return {}
+
+
+def _is_foreign_project_metadata(data_obj: Mapping[str, Any]) -> bool:
+    """Return True when `metadata[samourai_project]` is present with any value other than `'kodera'`."""
+    return is_foreign_samourai_project(data_obj)
 
 
 def _resolve_seat_quota(subscription: Subscription) -> int:
@@ -855,6 +879,21 @@ def _handle_checkout_completed(
         )
         return "unmatched", None
 
+    if not direct_checkout_binding_matches_runtime(link.stripe_account_id, link.stripe_livemode):
+        events.record(
+            "payment.reconciliation_mismatch",
+            actor=SYSTEM,
+            organisation_id=link.organisation_id,
+            target=("payment_link", f"stripe:{session_id}"),
+            metadata={
+                "provider": "stripe",
+                "event_id": event_id,
+                "invoice_id": str(link.invoice_id),
+                "reason": "platform_or_livemode_mismatch",
+            },
+        )
+        return "mismatch", link.organisation_id
+
     payment_status = data_obj.get("payment_status")
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if event_type == "checkout.session.completed" and payment_status == "unpaid":
@@ -986,6 +1025,20 @@ def _handle_checkout_async_payment_failed(
         if h31_cancelled is not None:
             return h31_cancelled
         return "unmatched", None
+    if not direct_checkout_binding_matches_runtime(link.stripe_account_id, link.stripe_livemode):
+        events.record(
+            "payment.reconciliation_mismatch",
+            actor=SYSTEM,
+            organisation_id=link.organisation_id,
+            target=("payment_link", f"stripe:{session_id}"),
+            metadata={
+                "provider": "stripe",
+                "event_id": event_id,
+                "invoice_id": str(link.invoice_id),
+                "reason": "platform_or_livemode_mismatch",
+            },
+        )
+        return "mismatch", link.organisation_id
 
     try:
         port_event = translate_port_event(
@@ -1056,6 +1109,10 @@ def _handle_checkout_expired(
         if h31_cancelled is not None:
             return h31_cancelled
         return "unmatched", None
+    if not (
+        link.stripe_account_id is None and link.stripe_livemode is None
+    ) and not direct_checkout_binding_matches_runtime(link.stripe_account_id, link.stripe_livemode):
+        return "mismatch", link.organisation_id
     if link.state == "active":
         link.state = "expired"
         link.save(update_fields=["state", "updated_at"])
@@ -1108,6 +1165,7 @@ def _handle_payment_intent_succeeded(
 
     existing_payment = Payment.objects.filter(provider="stripe", provider_ref=pi_id).first()
     link: PaymentLink | None = None
+    exp_acct, exp_live = expected_stripe_binding()
     if existing_payment is not None:
         inv_id = existing_payment.invoice_id
         if existing_payment.payment_link_id is not None:
@@ -1121,24 +1179,22 @@ def _handle_payment_intent_succeeded(
     else:
         meta_inv_id = _extract_uuid(meta, "core_invoice_id", "invoice_id")
         if meta_inv_id is not None:
+            base_links = PaymentLink.objects.filter(provider="stripe", invoice_id=meta_inv_id)
+            bound_links = base_links
+            if exp_acct is not None or exp_live is not None:
+                if exp_acct is not None:
+                    bound_links = bound_links.filter(stripe_account_id=exp_acct)
+                if exp_live is not None:
+                    bound_links = bound_links.filter(stripe_livemode=exp_live)
+            else:
+                bound_links = bound_links.filter(
+                    stripe_account_id__isnull=True, stripe_livemode__isnull=True
+                )
             link = (
-                PaymentLink.objects.filter(
-                    provider="stripe",
-                    invoice_id=meta_inv_id,
-                    state="active",
-                )
-                .order_by("-created_at", "-id")
-                .first()
-                or PaymentLink.objects.filter(
-                    provider="stripe",
-                    invoice_id=meta_inv_id,
-                    state="used",
-                )
-                .order_by("-created_at", "-id")
-                .first()
-                or PaymentLink.objects.filter(provider="stripe", invoice_id=meta_inv_id)
-                .order_by("-created_at", "-id")
-                .first()
+                bound_links.filter(state="active").order_by("-created_at", "-id").first()
+                or bound_links.filter(state="used").order_by("-created_at", "-id").first()
+                or bound_links.order_by("-created_at", "-id").first()
+                or base_links.order_by("-created_at", "-id").first()
             )
         if meta_inv_id is None or link is None:
             events.record(
@@ -1154,6 +1210,23 @@ def _handle_payment_intent_succeeded(
             )
             return "unmatched", None
         inv_id = link.invoice_id
+
+    if link is not None and not direct_checkout_binding_matches_runtime(
+        link.stripe_account_id, link.stripe_livemode
+    ):
+        events.record(
+            "payment.reconciliation_mismatch",
+            actor=SYSTEM,
+            organisation_id=link.organisation_id,
+            target=("payment", f"stripe:{pi_id}"),
+            metadata={
+                "provider": "stripe",
+                "event_id": event_id,
+                "invoice_id": str(link.invoice_id),
+                "reason": "platform_or_livemode_mismatch",
+            },
+        )
+        return "mismatch", link.organisation_id
 
     # Lock Invoice before Payment, matching apps.billing.payments.services._locate lock order.
     invoice = Invoice.objects.select_for_update().filter(id=inv_id).first()
@@ -1390,6 +1463,12 @@ def _handle_charge_refunded(
 
     invoice = Invoice.objects.select_for_update().get(id=existing_payment.invoice_id)
     payment = Payment.objects.select_for_update().get(id=existing_payment.id)
+    if payment.payment_link_id is not None:
+        bound_link = PaymentLink.objects.filter(id=payment.payment_link_id).first()
+        if bound_link is not None and not direct_checkout_binding_matches_runtime(
+            bound_link.stripe_account_id, bound_link.stripe_livemode
+        ):
+            return "mismatch", payment.organisation_id
     outcome = _apply_g4_refund_to_payment(
         invoice=invoice,
         payment=payment,
@@ -1426,13 +1505,10 @@ def receive_stripe_webhook(
         webhook_secret=webhook_secret,
         clock=clock,
     )
-    event_id, event_type, livemode, occurred_at, data_obj = _parse_event_envelope(raw_body)
-    expected_livemode = getattr(settings, "KODERA_STRIPE_EXPECTED_LIVEMODE", None)
-    if expected_livemode is not None:
-        if not isinstance(expected_livemode, bool):
-            raise StripeWebhookSecretMissingError()
-        if livemode is not expected_livemode:
-            raise StripeWebhookSignatureError("livemode-mismatch")
+    event_id, event_type, livemode, has_livemode, occurred_at, data_obj = _parse_event_envelope(
+        raw_body
+    )
+    _verify_expected_livemode(livemode=livemode, has_livemode=has_livemode)
 
     with transaction.atomic():
         delivery = _insert_delivery_once(
@@ -1449,7 +1525,12 @@ def receive_stripe_webhook(
             )
 
         organisation_id: UUID | None = None
-        if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        if _is_foreign_project_metadata(data_obj):
+            outcome = "ignored"
+        elif event_type in {
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
+        }:
             outcome, organisation_id = _handle_checkout_completed(
                 event_id=event_id,
                 event_type=event_type,
@@ -1507,11 +1588,23 @@ def _try_handle_h31_checkout_cancelled(
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_checkout_session_id=session_id).first()
     if boost is not None:
+        if not (
+            boost.stripe_account_id is None and boost.stripe_livemode is None
+        ) and not direct_checkout_binding_matches_runtime(
+            boost.stripe_account_id, boost.stripe_livemode
+        ):
+            return "mismatch", boost.organisation_id
         cancelled = boosts.cancel_pending_boost_grant(grant_id=boost.id)
         return ("applied" if cancelled else "ignored"), boost.organisation_id
 
     vip = VipMembershipEntitlement.objects.filter(stripe_checkout_session_id=session_id).first()
     if vip is not None:
+        if not (
+            vip.stripe_account_id is None and vip.stripe_livemode is None
+        ) and not connect_checkout_binding_matches_runtime(
+            vip.stripe_account_id, vip.stripe_livemode
+        ):
+            return "mismatch", vip.organisation_id
         cancelled = vip_connect.cancel_pending_vip_entitlement(entitlement_id=vip.id)
         return ("applied" if cancelled else "ignored"), vip.organisation_id
 
@@ -1581,6 +1674,15 @@ def _try_handle_h31_checkout_completed(
     )
     if org_id is None:
         return None
+    if boost is not None and not direct_checkout_binding_matches_runtime(
+        boost.stripe_account_id, boost.stripe_livemode
+    ):
+        return "mismatch", org_id
+    if vip is not None and not connect_checkout_binding_matches_runtime(
+        vip.stripe_account_id, vip.stripe_livemode
+    ):
+        return "mismatch", org_id
+
     payment_status = data_obj.get("payment_status")
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         if event_type == "checkout.session.completed" and (
@@ -1722,6 +1824,10 @@ def _try_handle_h31_payment_intent_succeeded(
         boost = WorkspaceBoostGrant.objects.filter(id=meta_boost_id).first()
 
     if boost is not None:
+        if not direct_checkout_binding_matches_runtime(
+            boost.stripe_account_id, boost.stripe_livemode
+        ):
+            return "mismatch", boost.organisation_id
         if meta_boost_id is not None and meta_boost_id != boost.id:
             return "mismatch", boost.organisation_id
         if _has_nonempty_key(meta, "core_invoice_id"):
@@ -1766,6 +1872,8 @@ def _try_handle_h31_payment_intent_succeeded(
         vip = VipMembershipEntitlement.objects.filter(id=meta_vip_id).first()
 
     if vip is not None:
+        if not connect_checkout_binding_matches_runtime(vip.stripe_account_id, vip.stripe_livemode):
+            return "mismatch", vip.organisation_id
         if meta_vip_id is not None and meta_vip_id != vip.id:
             return "mismatch", vip.organisation_id
         if _has_nonempty_key(meta, "workspace_id"):
@@ -1887,6 +1995,10 @@ def _try_handle_h31_charge_refunded(
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_payment_intent_id=pi_id).first()
     if boost is not None:
+        if not direct_checkout_binding_matches_runtime(
+            boost.stripe_account_id, boost.stripe_livemode
+        ):
+            return "mismatch", boost.organisation_id
         if (
             currency != boost.currency
             or amount_refunded <= 0
@@ -1930,6 +2042,8 @@ def _try_handle_h31_charge_refunded(
 
     vip = VipMembershipEntitlement.objects.filter(stripe_payment_intent_id=pi_id).first()
     if vip is not None:
+        if not connect_checkout_binding_matches_runtime(vip.stripe_account_id, vip.stripe_livemode):
+            return "mismatch", vip.organisation_id
         if (
             currency != vip.currency
             or amount_refunded <= 0
@@ -2021,6 +2135,8 @@ def _try_handle_h31_charge_disputed(
 
     vip = VipMembershipEntitlement.objects.filter(stripe_payment_intent_id=pi_id).first()
     if vip is not None:
+        if not connect_checkout_binding_matches_runtime(vip.stripe_account_id, vip.stripe_livemode):
+            return "mismatch", vip.organisation_id
         if currency != vip.currency or raw_amount > vip.total_incl_vat_minor:
             return "mismatch", vip.organisation_id
         dispute_fee = (
@@ -2039,6 +2155,10 @@ def _try_handle_h31_charge_disputed(
 
     boost = WorkspaceBoostGrant.objects.filter(stripe_payment_intent_id=pi_id).first()
     if boost is not None:
+        if not direct_checkout_binding_matches_runtime(
+            boost.stripe_account_id, boost.stripe_livemode
+        ):
+            return "mismatch", boost.organisation_id
         if currency != boost.currency or raw_amount > boost.gross_amount_minor:
             return "mismatch", boost.organisation_id
         boosts.dispute_boost_grant(
@@ -2186,6 +2306,12 @@ def _handle_charge_dispute_created(
         return "deferred", None
 
     invoice = Invoice.objects.select_for_update().get(id=existing_payment.invoice_id)
+    if existing_payment.payment_link_id is not None:
+        bound_link = PaymentLink.objects.filter(id=existing_payment.payment_link_id).first()
+        if bound_link is not None and not direct_checkout_binding_matches_runtime(
+            bound_link.stripe_account_id, bound_link.stripe_livemode
+        ):
+            return "mismatch", existing_payment.organisation_id
     reconciled = reconcile(
         provider_name="stripe",
         event=PortEvent(
@@ -2232,12 +2358,22 @@ class OfflineWebhookDeduplicator:
             webhook_secret=self._webhook_secret,
             clock=clock,
         )
-        event_id, event_type, _, occurred_at, data_obj = _parse_event_envelope(raw_body)
+        event_id, event_type, livemode, has_livemode, occurred_at, data_obj = _parse_event_envelope(
+            raw_body
+        )
+        _verify_expected_livemode(livemode=livemode, has_livemode=has_livemode)
         if event_id in self._seen_event_ids:
             return StripeWebhookReceipt(
                 event_id=event_id,
                 event_type=event_type,
                 status="duplicate",
+            )
+        if _is_foreign_project_metadata(data_obj):
+            self._seen_event_ids[event_id] = "ignored"
+            return StripeWebhookReceipt(
+                event_id=event_id,
+                event_type=event_type,
+                status="ignored",
             )
         if event_type not in G4_COLLECTION_EVENTS:
             self._seen_event_ids[event_id] = "ignored_event_type"

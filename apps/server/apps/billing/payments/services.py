@@ -76,6 +76,60 @@ class LinkResult:
     created: bool
 
 
+def expected_stripe_binding() -> tuple[str | None, bool | None]:
+    raw_acct = getattr(settings, "KODERA_STRIPE_PLATFORM_ACCOUNT_ID", None)
+    raw_live = getattr(settings, "KODERA_STRIPE_EXPECTED_LIVEMODE", None)
+    acct = raw_acct if isinstance(raw_acct, str) and raw_acct else None
+    live = raw_live if isinstance(raw_live, bool) else None
+    return acct, live
+
+
+_expected_stripe_binding = expected_stripe_binding
+
+
+def direct_checkout_binding_matches_runtime(
+    stripe_account_id: str | None,
+    stripe_livemode: bool | None,
+) -> bool:
+    exp_acct, exp_live = expected_stripe_binding()
+    if exp_acct is None and exp_live is None:
+        return stripe_account_id is None and stripe_livemode is None
+    if exp_acct is not None and stripe_account_id != exp_acct:
+        return False
+    if exp_live is not None and stripe_livemode is not exp_live:
+        return False
+    return True
+
+
+def connect_checkout_binding_matches_runtime(
+    stripe_account_id: str | None,
+    stripe_livemode: bool | None,
+) -> bool:
+    from apps.billing.configuration import (
+        default_stripe_livemode,
+        default_stripe_platform_account_id,
+    )
+
+    try:
+        expected_platform = default_stripe_platform_account_id()
+    except ValueError:
+        return False
+    expected_livemode = default_stripe_livemode()
+    if stripe_account_id is None and stripe_livemode is None:
+        exp_acct, exp_live = expected_stripe_binding()
+        return exp_acct is None and exp_live is None
+    return stripe_account_id == expected_platform and stripe_livemode is expected_livemode
+
+
+def link_matches_runtime_binding(link: PaymentLink) -> bool:
+    if link.provider != "stripe":
+        return True
+    return direct_checkout_binding_matches_runtime(link.stripe_account_id, link.stripe_livemode)
+
+
+_link_matches_runtime_binding = link_matches_runtime_binding
+
+
 def _active_link(invoice_id: UUID, now: datetime) -> PaymentLink | None:
     link = (
         PaymentLink.objects.select_for_update()
@@ -86,6 +140,13 @@ def _active_link(invoice_id: UUID, now: datetime) -> PaymentLink | None:
         link.state = "expired"
         link.save(update_fields=["state", "updated_at"])
         return None
+    if link is not None and not _link_matches_runtime_binding(link):
+        # Refuse issuing a replacement Checkout Session while an unexpired foreign-account or
+        # cross-mode session remains open at Stripe, preventing both double-payment and unique
+        # active-link IntegrityError until the old session expires.
+        raise PaymentInFlightError(
+            "An unexpired payment link from a prior provider binding is still active"
+        )
     return link
 
 
@@ -210,14 +271,20 @@ def check_return_url(return_url: str | None) -> None:
 
 
 def existing_stripe_customer_ref(*, organisation_id: UUID) -> str | None:
-    """Return the latest recorded Stripe customer ID for `organisation_id`, if any."""
-    found = (
+    """Return the latest recorded Stripe customer ID for `organisation_id` bound to the active
+    Stripe account and mode, if any."""
+    qs = (
         Payment.objects.filter(organisation_id=organisation_id, provider="stripe")
         .exclude(provider_customer_ref__isnull=True)
         .exclude(provider_customer_ref="")
-        .order_by("-created_at", "-id")
-        .values_list("provider_customer_ref", flat=True)
-        .first()
+    )
+    exp_acct, exp_live = _expected_stripe_binding()
+    if exp_acct is not None:
+        qs = qs.filter(payment_link__stripe_account_id=exp_acct)
+    if exp_live is not None:
+        qs = qs.filter(payment_link__stripe_livemode=exp_live)
+    found = (
+        qs.order_by("-created_at", "-id").values_list("provider_customer_ref", flat=True).first()
     )
     return str(found) if found else None
 
@@ -333,6 +400,7 @@ def record_link(
 
 
 def _record_issued(invoice: Invoice, issued: IssuedLink, state: str) -> PaymentLink:
+    exp_acct, exp_live = _expected_stripe_binding() if issued.provider == "stripe" else (None, None)
     return PaymentLink.objects.create(
         organisation_id=invoice.organisation_id,
         invoice=invoice,
@@ -343,6 +411,8 @@ def _record_issued(invoice: Invoice, issued: IssuedLink, state: str) -> PaymentL
         amount_minor=issued.amount_minor,
         currency=issued.currency,
         expires_at=issued.expires_at,
+        stripe_account_id=exp_acct,
+        stripe_livemode=exp_live,
     )
 
 
@@ -682,27 +752,30 @@ def _cancel_at_provider(provider_name: str, provider_ref: str) -> None:
 
 def _withdraw_links(invoice: Invoice) -> None:
     """A paid invoice keeps no active link: each is cancelled, and withdrawn at the provider once
-    the transaction commits, so a second payment cannot be made through it."""
+    the transaction commits when its provider binding matches the active runtime."""
     active = list(PaymentLink.objects.select_for_update().filter(invoice=invoice, state="active"))
     for link in active:
         link.state = "cancelled"
         link.save(update_fields=["state", "updated_at"])
-        transaction.on_commit(partial(_cancel_at_provider, link.provider, link.provider_ref))
+        if _link_matches_runtime_binding(link):
+            transaction.on_commit(partial(_cancel_at_provider, link.provider, link.provider_ref))
 
 
 def withdraw_cancelled_links() -> int:
-    """Ask its provider to withdraw every cancelled link that has not expired: a cancelled
-    order's, which Core cancels in its own transaction without calling out (`services._cancel`).
-    The operator command `withdraw_cancelled_links`. Idempotent, and it records nothing: each run
-    asks again for every such link, and a refusal is logged by `_cancel_at_provider`. Returns how
-    many were asked."""
-    pending = list(
-        PaymentLink.objects.filter(state="cancelled", expires_at__gt=timezone.now()).values_list(
-            "provider", "provider_ref"
-        )
-    )
-    for provider_name, provider_ref in pending:
-        _cancel_at_provider(provider_name, provider_ref)
+    """Ask its provider to withdraw every cancelled link that has not expired and matches the
+    active runtime binding: a cancelled order's, which Core cancels in its own transaction without
+    calling out (`services._cancel`). The operator command `withdraw_cancelled_links`. Idempotent,
+    and it records nothing: each run asks again for every such link, and a refusal is logged by
+    `_cancel_at_provider`. Returns how many were asked."""
+    pending = [
+        link
+        for link in PaymentLink.objects.filter(
+            state="cancelled", expires_at__gt=timezone.now()
+        ).only("provider", "provider_ref", "stripe_account_id", "stripe_livemode")
+        if _link_matches_runtime_binding(link)
+    ]
+    for link in pending:
+        _cancel_at_provider(link.provider, link.provider_ref)
     return len(pending)
 
 

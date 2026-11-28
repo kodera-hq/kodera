@@ -475,6 +475,8 @@ class MarketplaceEntitlement(StoredModel):
     sealed_signing_secret = models.BinaryField(default=b"")
     idempotency_key = models.TextField()
     request_sha256 = models.TextField()
+    stripe_account_id = models.TextField(null=True)  # noqa: DJ001 - absent on free grants or pre-cutover
+    stripe_livemode = models.BooleanField(null=True)
     revoked_at = models.DateTimeField(null=True)
 
     class Meta:
@@ -496,6 +498,11 @@ class MarketplaceEntitlement(StoredModel):
             models.CheckConstraint(
                 name="extension_marketplace_req_digest",
                 condition=Q(request_sha256__regex=r"^[a-f0-9]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="extension_marketplace_stripe_acct_valid",
+                condition=Q(stripe_account_id__isnull=True)
+                | Q(stripe_account_id__regex=r"^acct_[A-Za-z0-9_]+$"),
             ),
         ]
 

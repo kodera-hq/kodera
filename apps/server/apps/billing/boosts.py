@@ -851,6 +851,16 @@ def create_boost_checkout(
             withdrawal_waiver_accepted=waiver_ok,
         )
 
+        from apps.billing.payments.services import (
+            existing_stripe_customer_ref,
+            expected_stripe_binding,
+        )
+        from apps.billing.vip_connect import ConnectPlatformMismatchError
+
+        exp_acct, exp_live = (
+            expected_stripe_binding() if provider.name == "stripe" else (None, None)
+        )
+
         existing = (
             WorkspaceBoostGrant.objects.select_for_update()
             .filter(
@@ -862,6 +872,18 @@ def create_boost_checkout(
         if existing is not None:
             if existing.request_sha256 != req_hash:
                 raise IdempotencyKeyReuseError()
+            if (
+                existing.state in {"pending_payment", "cancelled"}
+                and provider.name == "stripe"
+                and (exp_acct is not None or exp_live is not None)
+                and (
+                    (exp_acct is not None and existing.stripe_account_id != exp_acct)
+                    or (exp_live is not None and existing.stripe_livemode is not exp_live)
+                )
+            ):
+                raise ConnectPlatformMismatchError(
+                    "Pending or revoked boost checkout belongs to another Stripe platform or mode"
+                )
             if existing.invoice_id is None:
                 raise RuntimeError("existing boost grant missing bound invoice")
             inv = Invoice.objects.get(id=existing.invoice_id)
@@ -874,6 +896,8 @@ def create_boost_checkout(
                         url=existing.stripe_checkout_url,
                     ),
                 )
+            elif existing.state != "pending_payment":
+                raise IdempotencyKeyReuseError()
             else:
                 grant = existing
                 invoice = inv
@@ -910,6 +934,8 @@ def create_boost_checkout(
                 withdrawal_waiver_evidence=waiver_evidence,
                 idempotency_key=idempotency_key,
                 request_sha256=req_hash,
+                stripe_account_id=exp_acct,
+                stripe_livemode=exp_live,
             )
             inv_id = _issue_boost_invoice_via_authority(
                 grant_id=grant.id,
@@ -982,7 +1008,8 @@ def cancel_pending_boost_grant(*, grant_id: UUID) -> bool:
         if grant.state != "pending_payment":
             return False
         grant.state = "cancelled"
-        grant.save(update_fields=["state", "updated_at"])
+        grant.stripe_checkout_url = None
+        grant.save(update_fields=["state", "stripe_checkout_url", "updated_at"])
         return True
 
 

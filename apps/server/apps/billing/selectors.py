@@ -341,7 +341,9 @@ def credit_note_owner(credit_note_id: UUID) -> UUID | None:
 
 
 def get_payment_link(*, organisation_id: UUID, invoice_id: UUID) -> JSON | None:
-    """The invoice's active, unexpired link while the invoice is owed, or None: the `404`."""
+    """The invoice's active, unexpired link matching the runtime provider binding while owed, or None."""
+    from apps.billing.payments.services import _link_matches_runtime_binding
+
     row = PaymentLink.objects.filter(
         organisation_id=organisation_id,
         invoice_id=invoice_id,
@@ -350,7 +352,9 @@ def get_payment_link(*, organisation_id: UUID, invoice_id: UUID) -> JSON | None:
         state="active",
         expires_at__gt=timezone.now(),
     ).first()
-    return None if row is None else shape.payment_link(row)
+    if row is None or not _link_matches_runtime_binding(row):
+        return None
+    return shape.payment_link(row)
 
 
 def order_owner(order_id: UUID) -> UUID | None:

@@ -1,6 +1,6 @@
 # `kodera-server` (`apps/server`)
 
-Status: Active (`AGPL-3.0-or-later`, OpenAPI `0.62.0`)
+Status: Active (`AGPL-3.0-or-later`, OpenAPI `0.62.1`)
 
 `apps/server` is the control-plane API, real-time Yjs collaboration relay, LiveKit room-access sidecar, Matrix tenant-agent reconciler, proximity check-in broker, and background job queue of the `kodera-hq/kodera` monorepo. Server architectural decisions live in [`docs/adr/`](docs/adr/README.md); cross-stack trust boundaries and database role separation are documented in [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md) and [`docs/security/README.md`](docs/security/README.md).
 
@@ -60,7 +60,7 @@ flowchart TB
 
 ## Contracts Owned Here
 
-- **Customer & Agent OpenAPI 3.1 Contracts:** [`contracts/core-api.openapi.yaml`](contracts/core-api.openapi.yaml) (`0.62.0`), [`contracts/agent-api.openapi.yaml`](contracts/agent-api.openapi.yaml) (`0.11.0`), and [`contracts/staff-api.openapi.yaml`](contracts/staff-api.openapi.yaml) (`0.2.0`); see [`contracts/README.md`](contracts/README.md).
+- **Customer & Agent OpenAPI 3.1 Contracts:** [`contracts/core-api.openapi.yaml`](contracts/core-api.openapi.yaml) (`0.62.1`), [`contracts/agent-api.openapi.yaml`](contracts/agent-api.openapi.yaml) (`0.11.0`), and [`contracts/staff-api.openapi.yaml`](contracts/staff-api.openapi.yaml) (`0.2.0`); see [`contracts/README.md`](contracts/README.md).
 
 ## Local Development & Verification
 

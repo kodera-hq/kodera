@@ -1144,7 +1144,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; N4 assurance guards unchanged.
 # Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; N4 assurance guards unchanged.
 # Rebound at 0.62.0: conditional document subteam grants; N4 assurance guards unchanged.
-N4_VERSION = "0.62.0"
+# Rebound at 0.62.1: receiveStripeWebhook api_version enum gains 2025-02-24.acacia; N4 assurance guards unchanged.
+N4_VERSION = "0.62.1"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1206,7 +1207,8 @@ N4_VERSION = "0.62.0"
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; N4 assurance guards unchanged.
 # Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; N4 assurance guards unchanged.
 # Rebound at 0.62.0: conditional document subteam grants; N4 assurance guards unchanged.
-N4_OLD_CONTRACT = "9d2a5c1671da9d460aa949c70c0414aaf7c2017b277efcccd5c2875fa27a74d2"
+# Rebound at 0.62.1: receiveStripeWebhook api_version enum gains 2025-02-24.acacia; N4 assurance guards unchanged.
+N4_OLD_CONTRACT = "c65aa22c9430bd1d420da22998b5432359724480021438d1fc87e5054544325d"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

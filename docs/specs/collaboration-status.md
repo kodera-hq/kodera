@@ -16,7 +16,7 @@ The hosted Community tenant is live: active tenant promotion, release evidence a
 
 ## Wave 10 client capabilities
 
-Status: In progress; OpenAPI 0.62.0, cardless SMB self-serve (`<= 5` seats), client primitives, SFrame v1 confidential media framing, KDE1 encrypted collaboration relay admission, operator-gated server KVKB1 key-backup publication, and client-local encrypted full-text search implemented.
+Status: In progress; OpenAPI 0.62.1, cardless SMB self-serve (`<= 5` seats), client primitives, SFrame v1 confidential media framing, KDE1 encrypted collaboration relay admission, operator-gated server KVKB1 key-backup publication, and client-local encrypted full-text search implemented.
 
 Merged work in #169, #177, #180, #182, #183 and OpenAPI 0.60.0 implements refusal of plaintext fallback and
 room quarantine, worker-isolated attachment encryption, confidential Pages updates/snapshots,

@@ -1,6 +1,6 @@
 # `@kodera/web` (`apps/web`)
 
-Status: Active (`Apache-2.0`, OpenAPI `0.62.0`)
+Status: Active (`Apache-2.0`, OpenAPI `0.62.1`)
 
 `@kodera/web` is the unified workspace web client and customer administration console in the `kodera-hq/kodera` monorepo (`https://community.kodera.io` for the public Community workspace and `https://app.kodera.io` for shared-realm SMB and dedicated Sovereign organisations). Client architectural decisions live in [`docs/adr/`](docs/adr), and cryptographic worker boundaries are documented in [`docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md`](../../docs/security/THREAT_MODEL_AND_CRYPTOGRAPHY.md).
 
@@ -10,7 +10,7 @@ Status: Active (`Apache-2.0`, OpenAPI `0.62.0`)
 flowchart TB
   subgraph MainThread["Browser Main Thread (React 19 + TanStack Router)"]
     UI["Workspace Shell · Pro / Messages Mode<br/>@kodera/design-tokens (Tailwind 4 Preset)"]
-    SDK["Typed OpenAPI 0.62.0 Client · Matrix Sync · LiveKit Room"]
+    SDK["Typed OpenAPI 0.62.1 Client · Matrix Sync · LiveKit Room"]
     Sandbox["Extension Widget Host<br/>(Script-Isolated sandbox='' Containers)"]
   end
 
@@ -52,7 +52,7 @@ flowchart TB
 ## Non-Negotiable Frontend Rules
 
 - **Zero Secrets & Zero Inline Tokens:** `@kodera/web` holds only short-lived session tokens, never calls cloud/billing/IdP admin APIs directly (`WEB-ADR-0003`), and consumes all colours, spacing, and typography strictly from [`@kodera/design-tokens`](../../packages/design-tokens) (`WEB-ADR-0004`, enforced by `tests/unit/ui/tokens.test.ts`).
-- **Contract-Locked API Client & Demo Parity:** API types and mock schemas are generated from [`packages/api-contract`](../../packages/api-contract/README.md) (`0.62.0`, locked in `contracts/contract.lock.json`). Every client call uses direct `coreApi().VERB('/literal/path', ...)` syntax (`capabilities.test.ts`) and has a corresponding handler in `src/mocks/overlays/demo.groupe-vercelli.ts` (`seed.test.ts`).
+- **Contract-Locked API Client & Demo Parity:** API types and mock schemas are generated from [`packages/api-contract`](../../packages/api-contract/README.md) (`0.62.1`, locked in `contracts/contract.lock.json`). Every client call uses direct `coreApi().VERB('/literal/path', ...)` syntax (`capabilities.test.ts`) and has a corresponding handler in `src/mocks/overlays/demo.groupe-vercelli.ts` (`seed.test.ts`).
 - **Catalogue-Only i18n & Bundle Budget:** All user-facing copy lives in [`docs/specs/copy/fr.md`](docs/specs/copy/fr.md) and [`docs/specs/copy/en.md`](docs/specs/copy/en.md) (`npm run i18n:generate` / `npm run i18n:check`). Initial entry-chunk gzip size is gated below `160.00 kB` (`npm run build:check`).
 
 ## Local Development & Verification

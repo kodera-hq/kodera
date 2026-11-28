@@ -146,7 +146,9 @@ def test_a_link_is_a_checkout_session_for_the_invoice_card_and_sepa(stripe):
     assert form["line_items[0][price_data][unit_amount]"] == ["538560"]
     assert form["line_items[0][price_data][currency]"] == ["eur"]
     assert form["metadata[core_invoice_id]"] == [str(placed.invoice.id)]
+    assert form["metadata[samourai_project]"] == ["kodera"]
     assert form["payment_intent_data[metadata][core_invoice_id]"] == [str(placed.invoice.id)]
+    assert form["payment_intent_data[metadata][samourai_project]"] == ["kodera"]
     assert form["customer_creation"] == ["always"]
     assert "tax" not in " ".join(form), "Stripe Tax is not used: Core computes the VAT"
     assert link.provider == "stripe" and link.provider_ref.startswith("cs_stub_")
@@ -588,3 +590,45 @@ def test_a_failed_sepa_debit_spends_its_link_so_the_next_press_opens_a_fresh_one
         return_url="https://app.localhost/i",
     )
     assert fresh.created is True and fresh.link.id != link.id
+
+
+def test_cutover_drains_pre_cutover_or_cross_mode_payment_link_without_foreign_cancel(
+    stripe, settings
+):
+    _, stub = stripe
+    settings.KODERA_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1QhZ8fRwfVmWKPLR"
+    settings.KODERA_STRIPE_EXPECTED_LIVEMODE = True
+    w, placed, old_link = linked(stripe)
+    assert old_link.stripe_account_id == "acct_1QhZ8fRwfVmWKPLR"
+    assert old_link.stripe_livemode is True
+
+    # Cut over runtime binding to dedicated Kodera live account -> while old_link is still
+    # unexpired, reissuing refuses with PaymentInFlightError (no foreign /expire call and no
+    # duplicate active session); once old_link expires, a fresh link issues on the new account.
+    stub.requests.clear()
+    settings.KODERA_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1UgN9ORytJJnrEun"
+    settings.KODERA_STRIPE_EXPECTED_LIVEMODE = True
+    with pytest.raises(payments.PaymentInFlightError):
+        payments.create_payment_link(
+            invoice_id=placed.invoice.id,
+            organisation_id=w.organisation.id,
+            return_url="https://app.localhost/invoices",
+        )
+    assert not any(req[1].endswith(f"/{old_link.provider_ref}/expire") for req in stub.requests)
+
+    PaymentLink.objects.filter(id=old_link.id).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    stub.requests.clear()
+    reissued = payments.create_payment_link(
+        invoice_id=placed.invoice.id,
+        organisation_id=w.organisation.id,
+        return_url="https://app.localhost/invoices",
+    )
+    assert reissued.created is True
+    assert reissued.link.id != old_link.id
+    assert reissued.link.stripe_account_id == "acct_1UgN9ORytJJnrEun"
+    assert reissued.link.stripe_livemode is True
+    old_link.refresh_from_db()
+    assert old_link.state == "expired"
+    assert not any(req[1].endswith(f"/{old_link.provider_ref}/expire") for req in stub.requests)

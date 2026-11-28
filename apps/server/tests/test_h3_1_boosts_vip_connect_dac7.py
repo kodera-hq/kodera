@@ -12,6 +12,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 from customer_http_fixtures import http_signer as http_signer  # noqa: F401
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.billing import boosts, dac7, vat, vip_connect
@@ -1330,6 +1331,14 @@ def test_h31_api_writer_role_and_migration_0025_least_privilege_invariants() -> 
         "platform_fee_bps",
     ) not in api_writer_role.UPDATE_COLUMNS
     assert (
+        "billing_creatorconnectaccount",
+        "stripe_platform_account_id",
+    ) not in api_writer_role.UPDATE_COLUMNS
+    assert (
+        "billing_creatorconnectaccount",
+        "stripe_livemode",
+    ) not in api_writer_role.UPDATE_COLUMNS
+    assert (
         "billing_issue_boost_invoice(uuid, text, integer, jsonb, jsonb, text, integer, bigint, timestamp with time zone, timestamp with time zone)"
         in api_writer_role.EXECUTE_FUNCTIONS
     )
@@ -1782,6 +1791,7 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
         CreatorConnectAccount,
         Dac7SellerStatutorySnapshot,
         VipMembershipEntitlement,
+        VipTierOffer,
     )
     from apps.orgs.erasure_services import purge_core
     from apps.workspaces.channel_access import may_view, resolve
@@ -1904,6 +1914,58 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
     now_iso = timezone.now().isoformat()
 
     try:
+        from django.core.management import call_command
+
+        with acting_as(role):
+            # 0. Pre-seeded legacy `intent_recorded` row (`stripe_connect_account_id=None`) refuses
+            #    onboarding resume (409) until operator `reconcile_connect_platform_cutover --apply` rebinds it!
+            CreatorConnectAccount.objects.create(
+                organisation=org,
+                workspace=ws,
+                owner_user_id=owner_membership.user_id,
+                stripe_platform_account_id="acct_1QhZ8fRwfVmWKPLR",
+                stripe_livemode=True,
+                stripe_connect_account_id=None,
+                onboarding_state="intent_recorded",
+                operation_idempotency_key="0000000000000001",
+                seller_legal_name="Atelier Souverain SAS",
+                tax_residence_country="FR",
+                last_operation_error="prior_diagnostic;platform_account_cutover_reconciliation_required",
+            )
+            mismatch_uncreated = client.post(
+                f"/api/v1/organisations/{org.id}/workspace/monetization/connect/onboarding",
+                data=json.dumps(
+                    {
+                        "seller_legal_name": "Atelier Souverain SAS",
+                        "tax_residence_country": "FR",
+                        "refresh_url": "https://app.localhost/connect/refresh",
+                        "return_url": "https://app.localhost/connect/return",
+                    }
+                ),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {owner_tok}",
+                HTTP_IDEMPOTENCY_KEY="0000000000000002",
+            )
+            assert mismatch_uncreated.status_code == 409, mismatch_uncreated.content
+            assert (
+                CreatorConnectAccount.objects.get(workspace_id=ws.id).stripe_connect_account_id
+                is None
+            )
+
+        # Operator reconciliation runs under the privileged operator role, never `kodera_api`.
+        call_command(
+            "reconcile_connect_platform_cutover",
+            "--target-platform-account-id",
+            "acct_1UgN9jRu1W0izUsy",
+            "--target-livemode",
+            "false",
+            "--apply",
+        )
+        rebound_row = CreatorConnectAccount.objects.get(workspace_id=ws.id)
+        assert rebound_row.stripe_platform_account_id == "acct_1UgN9jRu1W0izUsy"
+        assert rebound_row.stripe_livemode is False
+        assert rebound_row.last_operation_error == "prior_diagnostic"
+
         with acting_as(role):
             # 1. Start Connect onboarding via HTTP -> checkpoints `acct_...` & seals TIN
             onb_res = client.post(
@@ -1924,7 +1986,33 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
             assert onb_res.status_code == 200, onb_res.content
             acct_id = onb_res.json()["stripe_connect_account_id"]
             acct_row = CreatorConnectAccount.objects.get(workspace_id=ws.id)
-            assert acct_row.stripe_platform_account_id == "acct_1QhZ8fRwfVmWKPLR"
+            assert acct_row.stripe_platform_account_id == "acct_1UgN9jRu1W0izUsy"
+            assert acct_row.stripe_livemode is False
+
+            # Legacy or cross-platform connected rows refuse onboarding resume and reconciliation (409 / ConnectPlatformMismatchError).
+            with override_settings(
+                KODERA_STRIPE_PLATFORM_ACCOUNT_ID="acct_1UgN9ORytJJnrEun",
+                KODERA_STRIPE_EXPECTED_LIVEMODE=True,
+            ):
+                mismatch_res = client.post(
+                    f"/api/v1/organisations/{org.id}/workspace/monetization/connect/onboarding",
+                    data=json.dumps(
+                        {
+                            "seller_legal_name": "Atelier Souverain SAS",
+                            "tax_residence_country": "FR",
+                            "refresh_url": "https://app.localhost/connect/refresh",
+                            "return_url": "https://app.localhost/connect/return",
+                        }
+                    ),
+                    content_type="application/json",
+                    HTTP_AUTHORIZATION=f"Bearer {owner_tok}",
+                    HTTP_IDEMPOTENCY_KEY="0000000000000003",
+                )
+                assert mismatch_res.status_code == 409, mismatch_res.content
+                with pytest.raises(vip_connect.ConnectPlatformMismatchError):
+                    vip_connect.reconcile_connect_account_status(
+                        workspace_id=ws.id, provider=adapter
+                    )
 
             # Metadata mismatch during reconciliation is refused closed!
             adapter.set_connect_account_state(
@@ -1950,6 +2038,30 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
             )
             assert reconciled.onboarding_state == "active"
 
+            # Platform/mode mismatch on `active` account refuses VIP tier publication (HTTP 409, 0 tiers written)!
+            with override_settings(
+                KODERA_STRIPE_PLATFORM_ACCOUNT_ID="acct_1UgN9ORytJJnrEun",
+                KODERA_STRIPE_EXPECTED_LIVEMODE=True,
+            ):
+                tier_mismatch_res = client.post(
+                    f"/api/v1/organisations/{org.id}/workspace/monetization/vip-tiers",
+                    data=json.dumps(
+                        {
+                            "code": "vip-patron-annual",
+                            "name": "Mécène Annuel",
+                            "billing_period": "yearly",
+                            "price_excl_vat_minor": 250_000,
+                            "granted_workspace_role_id": str(vip_role.id),
+                            "granted_channel_ids": [str(vip_channel.id), str(explicit_channel.id)],
+                        }
+                    ),
+                    content_type="application/json",
+                    HTTP_AUTHORIZATION=f"Bearer {owner_tok}",
+                    HTTP_IDEMPOTENCY_KEY="0000000000000004",
+                )
+                assert tier_mismatch_res.status_code == 409, tier_mismatch_res.content
+                assert VipTierOffer.objects.filter(workspace_id=ws.id).count() == 0
+
             # 2. Create VIP tier offer (> 2,000 EUR so 1 settled sale makes seller DAC7-reportable!)
             tier_res = client.post(
                 f"/api/v1/organisations/{org.id}/workspace/monetization/vip-tiers",
@@ -1969,6 +2081,32 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
             )
             assert tier_res.status_code == 201, tier_res.content
             tier_id = tier_res.json()["id"]
+
+            # Platform OR livemode mismatch on published tier refuses VIP pass checkout (HTTP 409, 0 entitlements)!
+            for bad_settings, idem_suffix in (
+                ({"KODERA_STRIPE_PLATFORM_ACCOUNT_ID": "acct_1UgN9ORytJJnrEun"}, "1"),
+                ({"KODERA_STRIPE_EXPECTED_LIVEMODE": True}, "2"),
+            ):
+                with override_settings(**bad_settings):
+                    chk_mismatch = client.post(
+                        f"/api/v1/organisations/{org.id}/workspace/monetization/vip-passes/checkout",
+                        data=json.dumps(
+                            {
+                                "tier_id": tier_id,
+                                "customer_kind": "b2c",
+                                "buyer_country": "DE",
+                                "return_url": "https://app.localhost/vip/return",
+                                "withdrawal_waiver_accepted": True,
+                                "withdrawal_waiver_at": now_iso,
+                                "withdrawal_waiver_statement": WAIVER_STATEMENT,
+                            }
+                        ),
+                        content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {buyer_tok}",
+                        HTTP_IDEMPOTENCY_KEY=f"000000000000005{idem_suffix}",
+                    )
+                    assert chk_mismatch.status_code == 409, chk_mismatch.content
+                    assert VipMembershipEntitlement.objects.filter(workspace_id=ws.id).count() == 0
             explicit_policy.refresh_from_db()
             explicit_channel.refresh_from_db()
             assert explicit_channel.explicit_policy_id == explicit_policy.id
@@ -2151,3 +2289,532 @@ def test_pg_volet_b_connect_negative_balance_channel_gate_and_dac7_erasure_reten
     assert retained_seller.reportable is True
     assert retained_seller.seller_legal_name == "Atelier Souverain SAS"
     assert retained_seller.tax_tin == "FR9944556677"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_0030_skips_privacy_protected_rows_fences_disabled_and_reset_unsettled_cutover() -> (
+    None
+):
+    import importlib
+    import uuid as uuid_mod
+
+    from django.apps import apps as django_apps
+    from django.core.management import call_command
+    from django.db import connections
+    from test_core_erasure import begin
+    from test_customer_persistence_models import anchor, anchor_models
+
+    from apps.billing.models import CreatorConnectAccount, VipTierOffer
+    from apps.orgs.erasure_services import purge_core
+    from apps.workspaces.models import Workspace
+
+    mig_0030 = importlib.import_module(
+        "apps.billing.migrations.0030_dedicated_kodera_stripe_platform_account"
+    )
+    models = anchor_models()
+
+    # 1. Erased organisation retaining an `intent_recorded` legacy row MUST NOT abort migration 0030!
+    erased_org, _, _ = anchor(models, slug="erased-" + uuid_mod.uuid4().hex[:6])
+    erased_ws = Workspace.objects.create(organisation=erased_org)
+    erased_acct = CreatorConnectAccount.objects.create(
+        organisation=erased_org,
+        workspace=erased_ws,
+        stripe_platform_account_id="acct_1QhZ8fRwfVmWKPLR",
+        stripe_livemode=True,
+        stripe_connect_account_id=None,
+        onboarding_state="intent_recorded",
+        operation_idempotency_key="0000000000000007",
+        seller_legal_name="Erased Seller",
+        tax_residence_country="FR",
+    )
+    erasure = begin(erased_org)
+    purge_core(erasure.id)
+
+    # 2. Disabled legacy connected row preserves `onboarding_state="disabled"` + prior diagnostic while clearing capabilities.
+    dis_org, _, _ = anchor(models, slug="disabl-" + uuid_mod.uuid4().hex[:6])
+    dis_ws = Workspace.objects.create(organisation=dis_org)
+    dis_acct = CreatorConnectAccount.objects.create(
+        organisation=dis_org,
+        workspace=dis_ws,
+        stripe_platform_account_id="acct_1QhZ8fRwfVmWKPLR",
+        stripe_livemode=True,
+        stripe_connect_account_id="acct_1LegacyDisabled01",
+        onboarding_state="disabled",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        operation_idempotency_key="0000000000000008",
+        seller_legal_name="Disabled Legacy Seller",
+        tax_residence_country="FR",
+        last_operation_error="rejected.fraud",
+    )
+
+    # 3. Unsettled active legacy connected row is fenced `restricted`, tier unpublished, then cleanly reset via `--reset-unsettled-connected`.
+    act_org, _, _ = anchor(models, slug="active-" + uuid_mod.uuid4().hex[:6])
+    act_ws = Workspace.objects.create(organisation=act_org)
+    act_acct = CreatorConnectAccount.objects.create(
+        organisation=act_org,
+        workspace=act_ws,
+        stripe_platform_account_id="acct_1QhZ8fRwfVmWKPLR",
+        stripe_livemode=True,
+        stripe_connect_account_id="acct_1LegacyActive01",
+        onboarding_state="active",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        operation_idempotency_key="0000000000000009",
+        seller_legal_name="Active Legacy Seller",
+        tax_residence_country="FR",
+    )
+    tier = VipTierOffer.objects.create(
+        organisation=act_org,
+        workspace=act_ws,
+        connect_account=act_acct,
+        code="legacy-tier-01",
+        name="Legacy Tier",
+        billing_period="monthly",
+        currency="EUR",
+        price_excl_vat_minor=1500,
+        granted_workspace_role_id=uuid_mod.uuid4(),
+        granted_channel_ids=[],
+        active=True,
+    )
+
+    with connections["default"].schema_editor() as schema_editor:
+        mig_0030._fence_retired_platform_connect_accounts(django_apps, schema_editor)
+
+    erased_acct.refresh_from_db()
+    assert erased_acct.stripe_platform_account_id == "acct_1QhZ8fRwfVmWKPLR"
+    with pytest.raises(vip_connect.ConnectPlatformMismatchError):
+        vip_connect._require_matching_platform(erased_acct)
+
+    dis_acct.refresh_from_db()
+    assert dis_acct.onboarding_state == "disabled"
+    assert dis_acct.charges_enabled is False and dis_acct.payouts_enabled is False
+    assert (
+        dis_acct.last_operation_error
+        == "rejected.fraud;platform_account_cutover_reconciliation_required"
+    )
+
+    act_acct.refresh_from_db()
+    tier.refresh_from_db()
+    assert act_acct.onboarding_state == "restricted"
+    assert act_acct.charges_enabled is False and act_acct.payouts_enabled is False
+    assert tier.active is False
+
+    call_command(
+        "reconcile_connect_platform_cutover",
+        "--target-platform-account-id",
+        "acct_1UgN9jRu1W0izUsy",
+        "--target-livemode",
+        "false",
+        "--apply",
+        "--reset-unsettled-connected",
+    )
+    act_acct.refresh_from_db()
+    assert act_acct.stripe_platform_account_id == "acct_1UgN9jRu1W0izUsy"
+    assert act_acct.stripe_livemode is False
+    assert act_acct.stripe_connect_account_id is None
+    assert act_acct.onboarding_state == "intent_recorded"
+    # Disabled (rejected.fraud) row MUST NOT be reset by --reset-unsettled-connected!
+    dis_acct.refresh_from_db()
+    assert dis_acct.onboarding_state == "disabled"
+    assert dis_acct.stripe_connect_account_id == "acct_1LegacyDisabled01"
+    assert dis_acct.stripe_platform_account_id == "acct_1QhZ8fRwfVmWKPLR"
+    assert (
+        dis_acct.last_operation_error
+        == "rejected.fraud;platform_account_cutover_reconciliation_required"
+    )
+
+    # 4. `--backfill-unbound-checkouts` refuses unless runtime settings match target AND zero
+    #    retired/mismatched CreatorConnectAccount rows remain (`dis_acct` is still on WKPLR).
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError, match="KODERA_STRIPE_PLATFORM_ACCOUNT_ID"):
+        call_command(
+            "reconcile_connect_platform_cutover",
+            "--target-platform-account-id",
+            "acct_1UgN9jRu1W0izUsy",
+            "--target-livemode",
+            "false",
+            "--backfill-unbound-checkouts",
+        )
+    with override_settings(
+        KODERA_STRIPE_PLATFORM_ACCOUNT_ID="acct_1UgN9jRu1W0izUsy",
+        KODERA_STRIPE_EXPECTED_LIVEMODE=False,
+    ):
+        with pytest.raises(CommandError, match="retired company account"):
+            call_command(
+                "reconcile_connect_platform_cutover",
+                "--target-platform-account-id",
+                "acct_1UgN9jRu1W0izUsy",
+                "--target-livemode",
+                "false",
+                "--backfill-unbound-checkouts",
+            )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_vip_checkout_in_flight_blocks_cutover_reset_and_revalidates_seller_binding() -> None:
+    import uuid as uuid_mod
+
+    from django.core.management import call_command
+    from test_customer_persistence_models import anchor, anchor_models
+
+    from apps.billing.models import CreatorConnectAccount, VipMembershipEntitlement, VipTierOffer
+    from apps.billing.payments.port import ProviderLink
+    from apps.workspaces.models import Workspace
+
+    models = anchor_models()
+    org, _, owner_memberships = anchor(models, slug="inflight-" + uuid_mod.uuid4().hex[:6])
+    owner_membership = owner_memberships[0]
+    ws = Workspace.objects.create(organisation=org)
+    acct = CreatorConnectAccount.objects.create(
+        organisation=org,
+        workspace=ws,
+        stripe_platform_account_id="acct_1UgN9jRu1W0izUsy",
+        stripe_livemode=False,
+        stripe_connect_account_id="acct_1SellerInFlight01",
+        onboarding_state="active",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        negative_balance_minor=500,
+        operation_idempotency_key="0000000000000011",
+        seller_legal_name="In-Flight Seller",
+        tax_residence_country="FR",
+    )
+    tier = VipTierOffer.objects.create(
+        organisation=org,
+        workspace=ws,
+        connect_account=acct,
+        code="inflight-tier",
+        name="Inflight Tier",
+        billing_period="monthly",
+        currency="EUR",
+        price_excl_vat_minor=2000,
+        granted_workspace_role_id=uuid_mod.uuid4(),
+        granted_channel_ids=[],
+        active=True,
+    )
+
+    cancelled_refs: list[str] = []
+
+    class _PausingProvider:
+        name = "stripe"
+
+        def create_link(self, req):
+            # While the provider request is in flight, a pending_payment row with NULL session/PI
+            # exists in PostgreSQL: `--reset-unsettled-connected` MUST NOT reset the seller account!
+            call_command(
+                "reconcile_connect_platform_cutover",
+                "--target-platform-account-id",
+                "acct_1UgN9ORytJJnrEun",
+                "--target-livemode",
+                "true",
+                "--apply",
+                "--reset-unsettled-connected",
+            )
+            mid = CreatorConnectAccount.objects.get(id=acct.id)
+            assert mid.stripe_connect_account_id == "acct_1SellerInFlight01"
+            assert mid.onboarding_state == "restricted"
+            return ProviderLink(
+                provider_ref="cs_test_inflight_stale_01",
+                url="https://checkout.stripe.test/c/pay/cs_test_inflight_stale_01",
+            )
+
+        def cancel_link(self, provider_ref: str) -> None:
+            cancelled_refs.append(provider_ref)
+
+    now_iso = timezone.now().isoformat().replace("+00:00", "Z")
+    with override_settings(
+        KODERA_STRIPE_PLATFORM_ACCOUNT_ID="acct_1UgN9jRu1W0izUsy",
+        KODERA_STRIPE_EXPECTED_LIVEMODE=False,
+    ):
+        with pytest.raises(vip_connect.ConnectPlatformMismatchError):
+            vip_connect.create_vip_pass_checkout(
+                organisation_id=org.id,
+                workspace_id=ws.id,
+                tier_id=tier.id,
+                membership_id=owner_membership.id,
+                buyer_user_id=owner_membership.user_id,
+                customer_kind="b2c",
+                buyer_country="FR",
+                return_url="https://app.localhost/vip/return",
+                locale="fr",
+                withdrawal_waiver_accepted=True,
+                withdrawal_waiver_at=timezone.datetime.fromisoformat(now_iso),
+                withdrawal_waiver_statement=WAIVER_STATEMENT,
+                idempotency_key="0000000000000012",
+                provider=_PausingProvider(),
+            )
+
+    acct.refresh_from_db()
+    assert acct.reserved_recovery_minor == 0
+    ent = VipMembershipEntitlement.objects.get(workspace_id=ws.id)
+    assert ent.state == "cancelled"
+    assert ent.stripe_checkout_url is None
+    assert cancelled_refs == ["cs_test_inflight_stale_01"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoke_unbound_pending_checkouts_retires_all_four_models_and_preserves_controls() -> None:
+    import io
+    import uuid as uuid_mod
+    from datetime import timedelta
+
+    from django.core.management import call_command
+    from test_customer_persistence_models import anchor, anchor_models
+
+    from apps.billing.models import (
+        CreatorConnectAccount,
+        Invoice,
+        PaymentLink,
+        VipMembershipEntitlement,
+        VipTierOffer,
+        WorkspaceBoostGrant,
+    )
+    from apps.extensions.models import ExtensionMarketplaceListing, MarketplaceEntitlement
+    from apps.workspaces.models import Workspace
+
+    models = anchor_models()
+    org, _, owner_memberships = anchor(models, slug="revunb-" + uuid_mod.uuid4().hex[:6])
+    owner_membership = owner_memberships[0]
+    ws = Workspace.objects.create(organisation=org)
+    now = timezone.now()
+
+    def _draft_invoice() -> Invoice:
+        return Invoice.objects.create(
+            organisation=org,
+            vat_regime="fr_standard",
+            issuer_legal_name="Samourai Coop",
+            issuer_address="10 rue de Penthievre",
+            issuer_siren="000000000",
+            issuer_vat_number="FR00000000000",
+            customer_legal_name="Synthetic Customer",
+            customer_address_line1="1 rue Synthetique",
+            customer_postal_code="75000",
+            customer_city="Paris",
+            customer_country="FR",
+            total_excl_vat_minor=1000,
+            vat_amount_minor=200,
+            total_incl_vat_minor=1200,
+        )
+
+    inv_unb = _draft_invoice()
+    inv_bound = _draft_invoice()
+
+    unb_link = PaymentLink.objects.create(
+        organisation=org,
+        invoice=inv_unb,
+        provider="stripe",
+        provider_ref="cs_unb_01",
+        url="https://checkout.stripe.test/unb-01",
+        amount_minor=inv_unb.total_incl_vat_minor,
+        currency="EUR",
+        state="active",
+        expires_at=now + timedelta(hours=5),
+        stripe_account_id=None,
+        stripe_livemode=None,
+    )
+    bound_link = PaymentLink.objects.create(
+        organisation=org,
+        invoice=inv_bound,
+        provider="stripe",
+        provider_ref="cs_bound_01",
+        url="https://checkout.stripe.test/bound-01",
+        amount_minor=inv_bound.total_incl_vat_minor,
+        currency="EUR",
+        state="active",
+        expires_at=now + timedelta(hours=5),
+        stripe_account_id="acct_1UgN9jRu1W0izUsy",
+        stripe_livemode=False,
+    )
+
+    unb_boost = WorkspaceBoostGrant.objects.create(
+        organisation=org,
+        workspace=ws,
+        purchaser_user_id=owner_membership.user_id,
+        pack_code="boost_starter",
+        customer_kind="b2c",
+        customer_country="FR",
+        currency="EUR",
+        vat_regime="fr_standard",
+        vat_rate_bp=2000,
+        net_amount_minor=1000,
+        vat_amount_minor=200,
+        gross_amount_minor=1200,
+        credit_amount_minor=1000,
+        seats_delta=5,
+        storage_bytes_delta=1024,
+        state="pending_payment",
+        stripe_checkout_session_id="cs_boost_unb_01",
+        stripe_checkout_url="https://checkout.stripe.test/boost-unb-01",
+        stripe_payment_intent_id=None,
+        stripe_account_id=None,
+        stripe_livemode=None,
+        idempotency_key="0000000000000013",
+        request_sha256="a" * 64,
+    )
+    paid_boost = WorkspaceBoostGrant.objects.create(
+        organisation=org,
+        workspace=ws,
+        purchaser_user_id=owner_membership.user_id,
+        pack_code="boost_starter",
+        customer_kind="b2c",
+        customer_country="FR",
+        currency="EUR",
+        vat_regime="fr_standard",
+        vat_rate_bp=2000,
+        net_amount_minor=1000,
+        vat_amount_minor=200,
+        gross_amount_minor=1200,
+        credit_amount_minor=1000,
+        seats_delta=5,
+        storage_bytes_delta=1024,
+        state="active",
+        withdrawal_waiver_accepted=True,
+        withdrawal_waiver_at=now,
+        withdrawal_waiver_evidence=WAIVER_STATEMENT,
+        activated_at=now,
+        expires_at=now + timedelta(days=30),
+        stripe_checkout_session_id="cs_boost_paid_01",
+        stripe_payment_intent_id="pi_boost_paid_01",
+        stripe_account_id=None,
+        stripe_livemode=None,
+        idempotency_key="0000000000000014",
+        request_sha256="b" * 64,
+    )
+
+    acct = CreatorConnectAccount.objects.create(
+        organisation=org,
+        workspace=ws,
+        stripe_platform_account_id="acct_1UgN9jRu1W0izUsy",
+        stripe_livemode=False,
+        stripe_connect_account_id="acct_1SellerRevUnb01",
+        onboarding_state="active",
+        charges_enabled=True,
+        payouts_enabled=True,
+        details_submitted=True,
+        negative_balance_minor=400,
+        reserved_recovery_minor=400,
+        operation_idempotency_key="0000000000000015",
+        seller_legal_name="Revoke Unbound Seller",
+        tax_residence_country="FR",
+    )
+    tier = VipTierOffer.objects.create(
+        organisation=org,
+        workspace=ws,
+        connect_account=acct,
+        code="rev-unb-tier",
+        name="Rev Unb Tier",
+        billing_period="monthly",
+        currency="EUR",
+        price_excl_vat_minor=2000,
+        granted_workspace_role_id=uuid_mod.uuid4(),
+        granted_channel_ids=[],
+        active=True,
+    )
+    unb_vip = VipMembershipEntitlement.objects.create(
+        organisation=org,
+        workspace=ws,
+        tier=tier,
+        membership_id=owner_membership.id,
+        buyer_user_id=owner_membership.user_id,
+        customer_kind="b2c",
+        buyer_country="FR",
+        currency="EUR",
+        vat_regime="fr_standard",
+        vat_rate_bp=2000,
+        gross_excl_vat_minor=2000,
+        vat_amount_minor=400,
+        total_incl_vat_minor=2400,
+        application_fee_amount_minor=600,
+        reserved_recovery_minor=400,
+        stripe_checkout_session_id="cs_vip_unb_01",
+        stripe_checkout_url="https://checkout.stripe.test/vip-unb-01",
+        stripe_payment_intent_id=None,
+        stripe_account_id=None,
+        stripe_livemode=None,
+        state="pending_payment",
+        idempotency_key="0000000000000016",
+        request_sha256="c" * 64,
+    )
+
+    listing = ExtensionMarketplaceListing.objects.create(
+        organisation=org,
+        workspace=ws,
+        creator=owner_membership,
+        slug="rev-unb-ext",
+        title="Rev Unb Ext",
+        summary="Test",
+        manifest={"id": "rev-unb-ext"},
+        pricing_mode="one_time",
+        price_excl_vat_minor=1500,
+        currency="EUR",
+        seller_connect_account_id="acct_1SellerRevUnb01",
+        published_at=now,
+    )
+    unb_mkt = MarketplaceEntitlement.objects.create(
+        organisation=org,
+        workspace=ws,
+        buyer_membership=owner_membership,
+        listing=listing,
+        state="pending",
+        checkout_ref="cs_mkt_unb_01",
+        checkout_url="https://checkout.stripe.test/mkt-unb-01",
+        payment_intent_id=None,
+        stripe_account_id=None,
+        stripe_livemode=None,
+        idempotency_key="0000000000000017",
+        request_sha256="d" * 64,
+    )
+
+    dry_out = io.StringIO()
+    call_command(
+        "reconcile_connect_platform_cutover",
+        "--target-platform-account-id",
+        "acct_1UgN9jRu1W0izUsy",
+        "--target-livemode",
+        "false",
+        "--revoke-unbound-pending-checkouts",
+        stdout=dry_out,
+    )
+    dry_payload = json.loads(dry_out.getvalue())
+    assert dry_payload["applied"] is False
+    assert dry_payload["revoked_unbound_pending"] == 4
+    unb_boost.refresh_from_db()
+    assert unb_boost.state == "pending_payment"
+
+    apply_out = io.StringIO()
+    call_command(
+        "reconcile_connect_platform_cutover",
+        "--target-platform-account-id",
+        "acct_1UgN9jRu1W0izUsy",
+        "--target-livemode",
+        "false",
+        "--revoke-unbound-pending-checkouts",
+        "--apply",
+        stdout=apply_out,
+    )
+    apply_payload = json.loads(apply_out.getvalue())
+    assert apply_payload["applied"] is True
+    assert apply_payload["revoked_unbound_pending"] == 4
+
+    unb_link.refresh_from_db()
+    bound_link.refresh_from_db()
+    unb_boost.refresh_from_db()
+    paid_boost.refresh_from_db()
+    unb_vip.refresh_from_db()
+    acct.refresh_from_db()
+    unb_mkt.refresh_from_db()
+    assert unb_link.state == "cancelled"
+    assert bound_link.state == "active"
+    assert unb_boost.state == "cancelled"
+    assert unb_boost.stripe_checkout_url is None
+    assert paid_boost.state == "active"
+    assert unb_vip.state == "cancelled"
+    assert unb_vip.stripe_checkout_url is None
+    assert acct.reserved_recovery_minor == 0
+    assert unb_mkt.state == "revoked"
+    assert unb_mkt.checkout_url is None

@@ -30,6 +30,7 @@ import hashlib
 import hmac
 import http.client
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -38,6 +39,8 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
+
+from django.conf import settings
 
 from .port import (
     CONNECT_ACCOUNT_ID,
@@ -53,10 +56,16 @@ from .port import (
 )
 
 API = "https://api.stripe.com/v1"
-# Pinned so a change of Stripe's default API version changes nothing here until it is reviewed. The
-# webhook endpoint is created at the same version: an event of another version is refused, its
-# payload not being the shape translated here. To review before the first live key.
-API_VERSION = "2024-06-20"
+# Pinned to the dedicated Kodera Stripe account webhook contract (2025-02-24.acacia) while
+# admitting prior reviewed snapshot versions during rolling cutovers.
+API_VERSION = "2025-02-24.acacia"
+SUPPORTED_EVENT_API_VERSIONS: frozenset[str] = frozenset(
+    {
+        "2024-06-20",
+        "2024-12-18.acacia",
+        API_VERSION,
+    }
+)
 SIGNATURE_HEADER = "Stripe-Signature"
 TOLERANCE_S = 300
 # Stripe keeps a Checkout Session open for at most 24 hours.
@@ -77,6 +86,11 @@ CLOSED = frozenset(
 
 # (method, url, headers, body) -> (status, body): urllib in production, a stub in tests.
 Transport = Callable[[str, str, Mapping[str, str], bytes], tuple[int, bytes]]
+_ACCOUNT_ID_TOKEN_RE = re.compile(r"acct_[A-Za-z0-9_]+")
+
+
+class StripeAccountPreflightError(ProviderUnavailableError):
+    """Transient `/v1/account` preflight failure before any mutating Stripe request is sent."""
 
 
 class StripeRefusedError(ProviderRefusedError):
@@ -110,6 +124,7 @@ class StripeProvider:
         webhook_secret: str,
         transport: Transport | None = None,
         clock: Callable[[], float] = time.time,
+        expected_account_id: str | None = None,
     ) -> None:
         # A restricted key, scoped to Checkout Sessions: the API process holds no key that can
         # refund or pay out.
@@ -119,8 +134,83 @@ class StripeProvider:
         self._webhook_secret = webhook_secret
         self._transport = transport or _urllib
         self._clock = clock
+        self._expected_account_id = expected_account_id
+        self._verified_bindings: set[tuple[str, str]] = set()
 
     # --- outbound --------------------------------------------------------------------------------
+
+    _PROCESS_VERIFIED_URLLIB_BINDINGS: set[tuple[str, str]] = set()
+
+    def _ensure_account_verified(self) -> None:
+        expected_acct = (
+            self._expected_account_id
+            if self._expected_account_id is not None
+            else (
+                getattr(settings, "KODERA_STRIPE_PLATFORM_ACCOUNT_ID", None)
+                if self._transport is _urllib
+                else None
+            )
+        )
+        if self._transport is _urllib and (
+            not isinstance(expected_acct, str) or not CONNECT_ACCOUNT_ID.fullmatch(expected_acct)
+        ):
+            raise ProviderRefusedError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID is not configured")
+        if expected_acct is None:
+            return
+        if not CONNECT_ACCOUNT_ID.fullmatch(expected_acct):
+            raise ProviderRefusedError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID is invalid")
+        binding = (self._secret_key, expected_acct)
+        if binding in self._verified_bindings:
+            return
+        process_binding = (
+            (hashlib.sha256(self._secret_key.encode("utf-8")).hexdigest(), expected_acct)
+            if self._transport is _urllib
+            else None
+        )
+        if (
+            process_binding is not None
+            and process_binding in self._PROCESS_VERIFIED_URLLIB_BINDINGS
+        ):
+            self._verified_bindings.add(binding)
+            return
+        headers = {
+            "Authorization": f"Bearer {self._secret_key}",
+            "Stripe-Version": API_VERSION,
+        }
+        try:
+            status, answer = self._transport("GET", API + "/account", headers, b"")
+        except ProviderUnavailableError as exc:
+            raise StripeAccountPreflightError(str(exc)) from exc
+        if status >= 500 or status == 429:
+            raise StripeAccountPreflightError(f"Stripe answered {status}")
+        try:
+            decoded = json.loads(answer)
+        except ValueError:
+            raise StripeAccountPreflightError(
+                "Stripe answered something that is not JSON"
+            ) from None
+        if not isinstance(decoded, dict):
+            raise StripeAccountPreflightError("Stripe answered JSON that is not an object")
+        matched = False
+        if status == 200 and decoded.get("id") == expected_acct:
+            matched = True
+        elif status == 403:
+            error = decoded.get("error")
+            if isinstance(error, dict) and error.get("type") == "invalid_request_error":
+                message = error.get("message")
+                if (
+                    isinstance(message, str)
+                    and f"account '{expected_acct}'" in message
+                    and set(_ACCOUNT_ID_TOKEN_RE.findall(message)) == {expected_acct}
+                ):
+                    matched = True
+        if not matched:
+            raise ProviderRefusedError(
+                "Stripe credential does not authenticate as KODERA_STRIPE_PLATFORM_ACCOUNT_ID"
+            )
+        self._verified_bindings.add(binding)
+        if process_binding is not None and len(self._PROCESS_VERIFIED_URLLIB_BINDINGS) < 64:
+            self._PROCESS_VERIFIED_URLLIB_BINDINGS.add(process_binding)
 
     def _call(
         self,
@@ -130,6 +220,7 @@ class StripeProvider:
         *,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        self._ensure_account_verified()
         if method == "POST" and path == "/checkout/sessions":
             if [value for key, value in params if key == "mode"] != ["payment"] or any(
                 key.startswith(("invoice_creation", "automatic_tax", "subscription_data"))
@@ -196,7 +287,8 @@ class StripeProvider:
                 ("client_reference_id", ref_id),
             ]
         )
-        effective_metadata: dict[str, str] = {}
+        caller_set_project = bool(request.metadata and "samourai_project" in request.metadata)
+        effective_metadata: dict[str, str] = {"samourai_project": "kodera"}
         if request.reference_kind == "invoice":
             effective_metadata["core_invoice_id"] = ref_id
         elif request.reference_kind == "extension_marketplace":
@@ -205,6 +297,7 @@ class StripeProvider:
         if request.metadata:
             for key, value in request.metadata.items():
                 effective_metadata[str(key)] = str(value)
+        effective_metadata["samourai_project"] = "kodera"
         if request.reference_kind == "extension_marketplace":
             effective_metadata["kodera_checkout_kind"] = "extension_marketplace"
             effective_metadata["kodera_marketplace_entitlement_id"] = ref_id
@@ -261,6 +354,29 @@ class StripeProvider:
                     fallback_params,
                     idempotency_key=fallback_idem,
                 )
+            elif (
+                refused.error_type == "idempotency_error"
+                and request.idempotency_key
+                and not caller_set_project
+            ):
+                # Rolling-upgrade compatibility: if a pre-upgrade worker created a session under
+                # `request.idempotency_key` before `samourai_project` was injected and lost the
+                # response, replay the original parameter shape under the same idempotency key.
+                legacy_params = [
+                    (key, val)
+                    for key, val in params
+                    if key
+                    not in (
+                        "metadata[samourai_project]",
+                        "payment_intent_data[metadata][samourai_project]",
+                    )
+                ]
+                session = self._call(
+                    "POST",
+                    "/checkout/sessions",
+                    legacy_params,
+                    idempotency_key=request.idempotency_key,
+                )
             else:
                 raise
         try:
@@ -300,6 +416,7 @@ class StripeProvider:
                 ("capabilities[transfers][requested]", "true"),
                 ("business_profile[name]", seller_legal_name),
                 ("metadata[kodera_workspace_id]", workspace_id),
+                ("metadata[samourai_project]", "kodera"),
             ],
             idempotency_key=f"connect-acct-{idempotency_key}",
         )
@@ -384,12 +501,29 @@ class StripeProvider:
             data = event["data"]["object"]
         except (ValueError, KeyError, TypeError):
             raise EventRejectedError("the event is malformed") from None
-        if version != API_VERSION:
+        if not isinstance(version, str) or version not in SUPPORTED_EVENT_API_VERSIONS:
             raise EventRejectedError("the event is of another Stripe API version")
+        if is_foreign_samourai_project(data):
+            return None
         try:
             return _translate(kind, event_id, occurred_at, data)
         except (KeyError, TypeError, ValueError):
             raise EventRejectedError(f"the {kind} event is malformed") from None
+
+
+def is_foreign_samourai_project(data_obj: object) -> bool:
+    """Return True when `metadata` explicitly includes `samourai_project` with any value other than
+    exact `'kodera'`. Legacy untagged objects (`'samourai_project' not in metadata` or `None`) return
+    False; whitespace, non-canonical casing, non-strings, or other product tags return True."""
+    if not isinstance(data_obj, Mapping):
+        return False
+    meta = data_obj.get("metadata")
+    if not isinstance(meta, Mapping) or "samourai_project" not in meta:
+        return False
+    raw = meta["samourai_project"]
+    if raw is None:
+        return False
+    return not isinstance(raw, str) or raw != "kodera"
 
 
 def _translate(

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.62.0
+  version: 0.62.1
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -945,10 +945,14 @@ paths:
       description: |
         Public webhook endpoint exempt from OIDC bearer tokens and authenticated strictly via
         `Stripe-Signature` HMAC-SHA256 (`t=...,v1=...`) within a 300-second replay window.
-        Enforces a pinned `api_version` allowlist (`2024-06-20`, `2024-12-18.acacia`) fail-closed
-        before database writes, closes business-state dispatch to the four G4 collection events
-        (`checkout.session.completed`, `checkout.session.expired`, `payment_intent.succeeded`,
-        `charge.refunded`), and deduplicates deliveries by `stripe_event_id`.
+        Enforces a pinned `api_version` allowlist (`2024-06-20`, `2024-12-18.acacia`,
+        `2025-02-24.acacia`) fail-closed before database writes, restricts business-state dispatch to
+        the seven handled Stripe event types — the six direct-collection rollout events
+        (`checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+        `checkout.session.async_payment_failed`, `checkout.session.expired`,
+        `payment_intent.succeeded`, `charge.refunded`) plus Volet B Connect dispute intake
+        (`charge.dispute.created`) — ignores events tagged with a non-`kodera` `samourai_project`
+        metadata stamp, and deduplicates deliveries by `stripe_event_id`.
       tags: [Billing]
       security: []
       x-kodera-scope: 'payment:act'
@@ -24640,6 +24644,7 @@ components:
       - type
       - api_version
       - created
+      - livemode
       - data
       properties:
         id:
@@ -24651,6 +24656,7 @@ components:
           enum:
           - '2024-06-20'
           - '2024-12-18.acacia'
+          - '2025-02-24.acacia'
         created:
           type: integer
           minimum: 0
@@ -24667,7 +24673,7 @@ components:
       examples:
       - id: evt_synthetic_0001
         type: checkout.session.completed
-        api_version: '2024-12-18.acacia'
+        api_version: '2025-02-24.acacia'
         created: 1763136400
         livemode: false
         data:

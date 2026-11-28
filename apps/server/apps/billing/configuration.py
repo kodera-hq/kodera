@@ -15,6 +15,10 @@ from services.identity.discovery_input import allowed_origins
 SERIES = re.compile(r"[A-Z]{2,8}(-[A-Z]{2,8})?\Z")
 # The API holds a Stripe restricted key only (docs/dev/SETTINGS_AND_SECRETS.md §2), matched whole.
 RESTRICTED_KEY = re.compile(r"rk_(live|test)_[A-Za-z0-9]+")
+STRIPE_PLATFORM_ACCOUNT_ID = re.compile(r"acct_[A-Za-z0-9_]+\Z")
+LIVE_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1UgN9ORytJJnrEun"
+SANDBOX_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1UgN9jRu1W0izUsy"
+LEGACY_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1QhZ8fRwfVmWKPLR"
 SIREN = re.compile(r"[0-9]{9}\Z")
 VAT_NUMBER = re.compile(r"[A-Z]{2}[0-9A-Z]{2,13}\Z")
 DEFAULT_SERIES = "INV"
@@ -107,6 +111,78 @@ def stripe_from_environment(
     if RESTRICTED_KEY.fullmatch(secret) is None or not webhook.startswith("whsec_"):
         raise ValueError("KODERA_STRIPE_SECRET_KEY or KODERA_STRIPE_WEBHOOK_SECRET is malformed")
     return "stripe", secret, webhook
+
+
+def stripe_runtime_binding_from_environment(
+    environ: Mapping[str, str],
+    *,
+    stripe_secret_key: str | None,
+) -> tuple[bool | None, str | None]:
+    """Bind `KODERA_STRIPE_EXPECTED_LIVEMODE` and `KODERA_STRIPE_PLATFORM_ACCOUNT_ID` to the
+    configured restricted key mode (`rk_live_` vs `rk_test_`). Configured keys require an explicit
+    `KODERA_STRIPE_PLATFORM_ACCOUNT_ID` so self-hosted deployments never silently inherit Kodera's
+    hosted platform account."""
+    raw_mode = environ.get("KODERA_STRIPE_EXPECTED_LIVEMODE", "").strip()
+    raw_platform = environ.get("KODERA_STRIPE_PLATFORM_ACCOUNT_ID", "").strip()
+    if raw_mode and raw_mode not in {"true", "false"}:
+        raise ValueError("KODERA_STRIPE_EXPECTED_LIVEMODE must be lowercase true or false")
+    if raw_platform and STRIPE_PLATFORM_ACCOUNT_ID.fullmatch(raw_platform) is None:
+        raise ValueError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID is malformed")
+    if raw_platform == LEGACY_STRIPE_PLATFORM_ACCOUNT_ID:
+        raise ValueError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID refuses the retired company account")
+    if stripe_secret_key is None:
+        if raw_mode or raw_platform:
+            raise ValueError(
+                "KODERA_STRIPE_EXPECTED_LIVEMODE and KODERA_STRIPE_PLATFORM_ACCOUNT_ID require Stripe keys"
+            )
+        return None, None
+    derived_live = stripe_secret_key.startswith("rk_live_")
+    if raw_mode and (raw_mode == "true") is not derived_live:
+        raise ValueError(
+            "KODERA_STRIPE_EXPECTED_LIVEMODE disagrees with KODERA_STRIPE_SECRET_KEY mode"
+        )
+    if not raw_platform:
+        raise ValueError(
+            "KODERA_STRIPE_PLATFORM_ACCOUNT_ID is required when KODERA_STRIPE_SECRET_KEY is configured"
+        )
+    if derived_live and raw_platform == SANDBOX_STRIPE_PLATFORM_ACCOUNT_ID:
+        raise ValueError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID names sandbox account in live mode")
+    if not derived_live and raw_platform == LIVE_STRIPE_PLATFORM_ACCOUNT_ID:
+        raise ValueError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID names live account in test mode")
+    return derived_live, raw_platform
+
+
+def default_stripe_livemode() -> bool:
+    """Resolve the active Stripe livemode boolean for new `CreatorConnectAccount` rows."""
+    from django.conf import settings
+
+    expected_live = getattr(settings, "KODERA_STRIPE_EXPECTED_LIVEMODE", None)
+    if isinstance(expected_live, bool):
+        return expected_live
+    secret = getattr(settings, "KODERA_STRIPE_SECRET_KEY", None)
+    return isinstance(secret, str) and secret.startswith("rk_live_")
+
+
+def default_stripe_platform_account_id() -> str:
+    """Resolve the active Stripe platform account ID for new `CreatorConnectAccount` rows without
+    defaulting configured deployments to Kodera's hosted platform accounts."""
+    from django.conf import settings
+
+    configured = getattr(settings, "KODERA_STRIPE_PLATFORM_ACCOUNT_ID", None)
+    if configured is not None:
+        if (
+            not isinstance(configured, str)
+            or STRIPE_PLATFORM_ACCOUNT_ID.fullmatch(configured) is None
+            or configured == LEGACY_STRIPE_PLATFORM_ACCOUNT_ID
+        ):
+            raise ValueError("KODERA_STRIPE_PLATFORM_ACCOUNT_ID is invalid")
+        return configured
+    secret = getattr(settings, "KODERA_STRIPE_SECRET_KEY", None)
+    if isinstance(secret, str) and secret.strip():
+        raise ValueError(
+            "KODERA_STRIPE_PLATFORM_ACCOUNT_ID is required when KODERA_STRIPE_SECRET_KEY is configured"
+        )
+    return SANDBOX_STRIPE_PLATFORM_ACCOUNT_ID
 
 
 def payment_return_origins(raw: object, *, loopback_http: bool = False) -> frozenset[str]:

@@ -11,6 +11,7 @@ from apps.billing.configuration import (
     payment_return_origins,
     series_from_environment as billing_series,
     stripe_from_environment,
+    stripe_runtime_binding_from_environment,
 )
 from apps.docs.configuration import collaboration_settings
 from config.deploy_environment import deployment
@@ -181,6 +182,10 @@ KODERA_SAML_SP_BASE_URL = _public_https_origin(
     KODERA_STRIPE_SECRET_KEY,
     KODERA_STRIPE_WEBHOOK_SECRET,
 ) = stripe_from_environment(os.environ)
+(
+    KODERA_STRIPE_EXPECTED_LIVEMODE,
+    KODERA_STRIPE_PLATFORM_ACCOUNT_ID,
+) = stripe_runtime_binding_from_environment(os.environ, stripe_secret_key=KODERA_STRIPE_SECRET_KEY)
 
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)

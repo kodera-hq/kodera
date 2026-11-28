@@ -19,6 +19,7 @@ from apps.billing.configuration import (
     payment_return_origins,
     series_from_environment as billing_series,
     stripe_from_environment,
+    stripe_runtime_binding_from_environment,
 )
 from apps.docs.configuration import collaboration_settings
 from config.environment import (
@@ -133,6 +134,10 @@ KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
     KODERA_STRIPE_SECRET_KEY,
     KODERA_STRIPE_WEBHOOK_SECRET,
 ) = stripe_from_environment(os.environ)
+(
+    KODERA_STRIPE_EXPECTED_LIVEMODE,
+    KODERA_STRIPE_PLATFORM_ACCOUNT_ID,
+) = stripe_runtime_binding_from_environment(os.environ, stripe_secret_key=KODERA_STRIPE_SECRET_KEY)
 
 # Where an accepted legal text is read, permanently (apps/legal): unset, no URL is given.
 KODERA_LEGAL_TEXT_ORIGIN = legal_text_origin(os.environ)

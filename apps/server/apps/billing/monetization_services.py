@@ -412,19 +412,28 @@ def serialize_dac7_summary_dict(summary: dac7.Dac7SellerSummary) -> dict[str, An
 @dataclass(frozen=True, slots=True)
 class SellerConnectReadiness:
     stripe_connect_account_id: str | None
+    stripe_platform_account_id: str
+    stripe_livemode: bool | None
     platform_fee_bps: int
     onboarding_state: str
     charges_enabled: bool
     payouts_enabled: bool
+    platform_matches: bool
 
 
 def resolve_workspace_seller_connect_account(
     *,
     organisation_id: UUID,
     workspace_id: UUID,
+    for_update: bool = False,
 ) -> SellerConnectReadiness | None:
     """Read the workspace's `CreatorConnectAccount` without exposing `apps.billing.models`."""
-    acct = CreatorConnectAccount.objects.filter(
+    qs = (
+        CreatorConnectAccount.objects.select_for_update()
+        if for_update
+        else CreatorConnectAccount.objects
+    )
+    acct = qs.filter(
         organisation_id=organisation_id,
         workspace_id=workspace_id,
     ).first()
@@ -432,10 +441,13 @@ def resolve_workspace_seller_connect_account(
         return None
     return SellerConnectReadiness(
         stripe_connect_account_id=acct.stripe_connect_account_id,
+        stripe_platform_account_id=acct.stripe_platform_account_id,
+        stripe_livemode=acct.stripe_livemode,
         platform_fee_bps=acct.platform_fee_bps,
         onboarding_state=acct.onboarding_state,
         charges_enabled=acct.charges_enabled,
         payouts_enabled=acct.payouts_enabled,
+        platform_matches=vip_connect.account_matches_runtime_platform(acct),
     )
 
 
