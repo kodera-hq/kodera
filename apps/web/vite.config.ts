@@ -5,6 +5,7 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { buildInitialGroundCss } from './scripts/vite/initialGroundCss'
 import { radixSelectViewportStylePlugin } from './scripts/vite/radixSelectViewportStyle'
 import { SUPPORT_EMAIL } from './src/app/supportContact'
 import { ENTRY_NAMESPACES, ORGANISATION_NAMESPACES } from './src/i18n/namespaces'
@@ -406,6 +407,9 @@ function chunkFileName(chunk: { name: string; facadeModuleId?: string | null }):
 }
 
 export default defineConfig({
+  define: {
+    __KODERA_INITIAL_GROUND_CSS__: JSON.stringify(buildInitialGroundCss()),
+  },
   build: {
     // The strict server permits same-origin files, never data URLs.
     assetsInlineLimit: 0,

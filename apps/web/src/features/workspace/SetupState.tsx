@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { HelpLink } from '../support/HelpLink'
 import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { KoderaStageMark } from '../../ui/StageFrame/KoderaStageMark'
 import { initialiseWorkspace, workspaceQueryKey } from './queries'
 import { isStaleRead, keyAfterFailure } from './workspace'
 import type { MessageKey } from '../../i18n'
@@ -23,14 +24,16 @@ interface BlockProps {
   organisationName: string
   titleKey: MessageKey
   bodyKey: MessageKey
+  animated?: boolean | undefined
   children?: ReactNode
 }
 
-function Block({ organisationName, titleKey, bodyKey, children }: BlockProps) {
+function Block({ organisationName, titleKey, bodyKey, animated = false, children }: BlockProps) {
   const { t } = useTranslation()
   return (
-    <section className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center narrow:px-0">
-      <p className="text-sm font-semibold text-c-ink-3">{organisationName}</p>
+    <section className="kodera-stage flex flex-1 flex-col items-center justify-center gap-4 px-6 py-12 text-center narrow:px-0">
+      <KoderaStageMark animated={animated} />
+      <p className="stage-status">{organisationName}</p>
       <h1 className="text-lg font-semibold text-c-ink">{t(titleKey)}</h1>
       <p className="max-w-[420px] text-sm text-c-ink-3">{t(bodyKey)}</p>
       {children}
@@ -44,6 +47,7 @@ export function PreparingState({ organisationName }: { organisationName: string 
       organisationName={organisationName}
       titleKey="console.workspace.setup.title-preparing"
       bodyKey="console.workspace.setup.body-preparing"
+      animated
     />
   )
 }
@@ -54,6 +58,7 @@ export function ConfirmingOwnerState({ organisationName }: { organisationName: s
       organisationName={organisationName}
       titleKey="console.workspace.setup.title-confirming-owner"
       bodyKey="console.workspace.setup.body-confirming-owner"
+      animated
     />
   )
 }
@@ -179,6 +184,7 @@ export function ReadyToCreateState({
       organisationName={organisationName}
       titleKey="console.workspace.setup.title-ready"
       bodyKey="console.workspace.setup.body-ready"
+      animated={busy !== undefined}
     >
       {failure === undefined ? null : (
         <InlineAlert kind="error" className="max-w-[420px] text-left">

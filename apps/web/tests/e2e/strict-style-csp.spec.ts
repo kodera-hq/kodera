@@ -99,6 +99,68 @@ test('strict style CSP: the policy refuses every style attribute and inline styl
   expect(await violations(page)).toEqual([])
 })
 
+test('strict style CSP: cold navigation paints saved theme while theme.js is held after fragment cleanup', async ({
+  browser,
+}) => {
+  for (const { osScheme, stored, expectedRgb } of [
+    { osScheme: 'light' as const, stored: 'black', expectedRgb: 'rgb(0, 0, 0)' },
+    { osScheme: 'dark' as const, stored: 'ciel-nuit', expectedRgb: 'rgb(14, 17, 32)' },
+  ]) {
+    const context = await browser.newContext({ colorScheme: osScheme })
+    try {
+      const page = await context.newPage()
+      await page.addInitScript((themeId: string) => {
+        window.localStorage.setItem('console:theme', themeId)
+        const events: Violation[] = []
+        Object.defineProperty(window, '__cspEvents', { value: events })
+        document.addEventListener('securitypolicyviolation', (event) =>
+          events.push({
+            directive: event.effectiveDirective,
+            blocked: event.blockedURI,
+            sample: event.sample,
+          })
+        )
+      }, stored)
+      let releaseTheme!: () => void
+      const themeHeld = new Promise<void>((resolve) => {
+        releaseTheme = resolve
+      })
+      let notifyThemeRequested!: () => void
+      const themeRequested = new Promise<void>((resolve) => {
+        notifyThemeRequested = resolve
+      })
+      await page.route('**/theme.js', async (route) => {
+        notifyThemeRequested()
+        await themeHeld
+        await route.continue()
+      })
+      const navigation = page.goto(`${server.origin}/login#synthetic-cold-fragment`, {
+        waitUntil: 'commit',
+      })
+      await themeRequested
+      await navigation
+      // Fragment cleanup has completed and the saved theme is already painted via the adopted
+      // `@layer theme` stylesheet before `theme.js` finishes loading (no opposite-OS flash).
+      expect(new URL(page.url()).hash).toBe('')
+      expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBeGreaterThanOrEqual(
+        1
+      )
+      expect(await page.locator('html').getAttribute('data-theme')).toBe(stored)
+      expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(
+        expectedRgb
+      )
+      releaseTheme()
+      await expect(page.locator('html')).toHaveAttribute('data-theme', stored)
+      expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(
+        expectedRgb
+      )
+      expect(await violations(page)).toEqual([])
+    } finally {
+      await context.close()
+    }
+  }
+})
+
 test('strict style CSP: Radix primitives, the audio dock and Theme Studio raise no violation', async ({
   page,
 }) => {

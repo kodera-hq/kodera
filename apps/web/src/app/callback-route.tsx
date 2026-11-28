@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthProvider'
 import { isProtectedCallbackError, readPendingRealm } from '../auth/oidc'
 import { consumeReturnTo, hasReturnTo, rememberReturnTo } from '../auth/return-to'
-import { TextButton as Button } from '../ui/Button/TextButton'
+import { KoderaStageEmblem, StageButton as Button } from '../ui/StageFrame/KoderaStageEmblem'
 import { onCommunityHost } from './communityHost'
 import { rootRoute } from './root-route'
 
@@ -38,36 +38,27 @@ function isExpiredAuthCallback(params: URLSearchParams): boolean {
   const oauthError = params.get('error')
   const description = params.get('error_description')
   if (oauthError === 'login_required') return true
-  if (description === null || !/\bauthentication_expired\b/i.test(description)) return false
-  return (
-    oauthError === null ||
-    oauthError === 'temporarily_unavailable' ||
-    oauthError === 'login_required' ||
-    oauthError === 'invalid_request'
-  )
+  if (!description || !/\bauthentication_expired\b/i.test(description)) return false
+  return !oauthError || oauthError === 'temporarily_unavailable' || oauthError === 'invalid_request'
 }
 
 function isRecoverableCallbackFailure(error: unknown, search: string): boolean {
-  if (!isTopLevelWindow()) return false
-  if (isProtectedCallbackError(error)) return false
+  if (!isTopLevelWindow() || isProtectedCallbackError(error)) return false
   if (error instanceof Error && error.message === 'Invalid sign-in identity.') return false
   const params = new URLSearchParams(search)
   if (isExpiredAuthCallback(params)) return true
-  // Email verification links opened in a new browser tab carry callback parameters without the
-  // originating tab's `sessionStorage` PKCE transaction or realm hint. On the Community host the
-  // realm and workspace destination are known, so a fresh S256 sign-in round-trip completes SSO.
   const oauthError = params.get('error')
-  if (oauthError !== null && PERMANENT_OAUTH_REFUSALS.has(oauthError)) return false
+  if (oauthError && PERMANENT_OAUTH_REFUSALS.has(oauthError)) return false
   return (
     onCommunityHost() &&
-    readPendingRealm() === undefined &&
-    (params.has('code') || params.has('state') || params.has('session_state') || params.has('iss'))
+    !readPendingRealm() &&
+    ['code', 'state', 'session_state', 'iss'].some((k) => params.has(k))
   )
 }
 
 function consumeCallbackBounceSlot(now = Date.now()): boolean {
   try {
-    const raw = window.sessionStorage.getItem(CALLBACK_BOUNCE_KEY)
+    const raw = sessionStorage.getItem(CALLBACK_BOUNCE_KEY)
     if (raw !== null) {
       const previous = Number(raw)
       if (
@@ -79,8 +70,8 @@ function consumeCallbackBounceSlot(now = Date.now()): boolean {
       }
     }
     const stamp = String(now)
-    window.sessionStorage.setItem(CALLBACK_BOUNCE_KEY, stamp)
-    return window.sessionStorage.getItem(CALLBACK_BOUNCE_KEY) === stamp
+    sessionStorage.setItem(CALLBACK_BOUNCE_KEY, stamp)
+    return sessionStorage.getItem(CALLBACK_BOUNCE_KEY) === stamp
   } catch {
     return false
   }
@@ -88,7 +79,7 @@ function consumeCallbackBounceSlot(now = Date.now()): boolean {
 
 function clearCallbackBounceSlot(): void {
   try {
-    window.sessionStorage.removeItem(CALLBACK_BOUNCE_KEY)
+    sessionStorage.removeItem(CALLBACK_BOUNCE_KEY)
   } catch {
     // Storage policy does not block navigation once signed in.
   }
@@ -119,15 +110,12 @@ function AuthCallback() {
   }
 
   function goToLogin(realm: string | undefined): void {
-    if (onCommunityHost() || realm === 'community') {
-      void router.navigate({ to: '/login', search: { org: 'community' }, replace: true })
-      return
-    }
-    if (realm !== undefined) {
-      void router.navigate({ to: '/login', search: { org: realm }, replace: true })
-      return
-    }
-    void router.navigate({ to: '/login', replace: true })
+    const org = onCommunityHost() || realm === 'community' ? 'community' : realm
+    void router.navigate(
+      org !== undefined
+        ? { to: '/login', search: { org }, replace: true }
+        : { to: '/login', replace: true }
+    )
   }
 
   function restartSignIn(): void {
@@ -194,16 +182,22 @@ function AuthCallback() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const ok = failed === 'none'
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-      <p role="status" aria-live="polite" className="text-md text-c-ink-3">
-        {failed === 'none'
+    <main className="kodera-stage kodera-stage-screen">
+      <KoderaStageEmblem animated={ok} />
+      <p
+        role="status"
+        aria-live="polite"
+        className={ok ? 'stage-status stage-status-on' : 'stage-status-err'}
+      >
+        {ok
           ? t('console.login.handoff.a11y-redirecting')
           : failed === 'expired'
             ? t('console.shell.session.body-unrecognized')
             : t('console.shell._.error-load-failed')}
       </p>
-      {failed === 'none' ? null : (
+      {ok ? null : (
         <Button variant="secondary" onClick={restartSignIn}>
           {t('console.shell.session.action-sign-in-again')}
         </Button>
