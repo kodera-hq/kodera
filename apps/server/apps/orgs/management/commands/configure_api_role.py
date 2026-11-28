@@ -8,7 +8,11 @@ from django.db import DatabaseError, connection, transaction
 from psycopg import sql
 
 from core.db.api_database_boundary import assert_writer_grants, credentials
-from core.db.api_writer_role import grant_statements, revoke_broad_insert_statements
+from core.db.api_writer_role import (
+    grant_statements,
+    revoke_broad_insert_statements,
+    revoke_retired_update_statements,
+)
 from core.db.role_acl import has_delegation
 
 
@@ -35,6 +39,8 @@ class Command(BaseCommand):
                     )
                 elif not has_delegation(cursor, role):
                     for statement in revoke_broad_insert_statements(role):
+                        cursor.execute(statement)
+                    for statement in revoke_retired_update_statements(role):
                         cursor.execute(statement)
                 assert_writer_grants(cursor, role)
                 # Two synchronous HTTP workers need two connections. This finite

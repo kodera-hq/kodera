@@ -123,6 +123,8 @@ KODERA_LIVEKIT_ROOM_SERVICE_URL: str | None = None
 KODERA_LIVEKIT_API_KEY: str | None = None
 KODERA_LIVEKIT_API_SECRET: str | None = None
 KODERA_LIVEKIT_ALLOW_INTERNAL_URL: bool = False
+KODERA_STRIPE_EXPECTED_LIVEMODE: bool | None = None
+KODERA_STRIPE_PLATFORM_ACCOUNT_ID: str | None = None
 
 from core.db.ee_erasure import install_ee_erasure_key_sync as _install_ee_erasure_key_sync  # noqa: E402
 

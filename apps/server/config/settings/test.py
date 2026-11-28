@@ -91,6 +91,8 @@ KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 KODERA_PAYMENT_PROVIDER = "fake"
 KODERA_STRIPE_SECRET_KEY = None
 KODERA_STRIPE_WEBHOOK_SECRET = None
+KODERA_STRIPE_EXPECTED_LIVEMODE = None
+KODERA_STRIPE_PLATFORM_ACCOUNT_ID = None
 KODERA_FAKE_PROVIDER_SECRET = hashlib.sha256(b"test-only fake payment provider secret").digest()
 
 # Tests never inherit optional worker endpoints or application keys from the host.

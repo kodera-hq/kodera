@@ -1026,8 +1026,10 @@ def test_stripe_webhook_api_version_allowlist_and_e133_acacia_snapshot_shapes(
     from apps.billing.payments.stripe import API_VERSION as OUTBOUND_API_VERSION
     from apps.billing.payments.stripe_webhook import ALLOWED_STRIPE_API_VERSIONS
 
-    assert OUTBOUND_API_VERSION == "2024-06-20"
-    assert ALLOWED_STRIPE_API_VERSIONS == frozenset({"2024-06-20", "2024-12-18.acacia"})
+    assert OUTBOUND_API_VERSION == "2025-02-24.acacia"
+    assert ALLOWED_STRIPE_API_VERSIONS == frozenset(
+        {"2024-06-20", "2024-12-18.acacia", "2025-02-24.acacia"}
+    )
 
     client, w, placed, link = stripe_webhook_world
     base_envelope = {
@@ -1075,9 +1077,13 @@ def test_stripe_webhook_api_version_allowlist_and_e133_acacia_snapshot_shapes(
     assert Invoice.objects.get(id=placed.invoice.id).state == "issued"
     assert PaymentLink.objects.get(id=link.id).state == "active"
 
-    # 2. Both `"2024-06-20"` and `"2024-12-18.acacia"` (exact E-133 snapshot envelope) reconcile
-    #    all 4 authorized G4 collection events cleanly against persisted Core ledger rows.
-    for slug_tag, api_ver in (("legacy202406", "2024-06-20"), ("e133acacia", "2024-12-18.acacia")):
+    # 2. All three pinned versions (`"2024-06-20"`, `"2024-12-18.acacia"`, and `"2025-02-24.acacia"`)
+    #    reconcile all 4 authorized G4 collection events cleanly against persisted Core ledger rows.
+    for slug_tag, api_ver in (
+        ("legacy202406", "2024-06-20"),
+        ("e133acacia", "2024-12-18.acacia"),
+        ("e135acacia", "2025-02-24.acacia"),
+    ):
         # 2a. `checkout.session.expired` + `checkout.session.completed` + `charge.refunded`
         w_cs = world()
         Workspace.objects.create(organisation=w_cs.organisation)
@@ -1241,6 +1247,56 @@ def test_stripe_webhook_api_version_allowlist_and_e133_acacia_snapshot_shapes(
         assert pi_res.json()["status"] == "applied"
         assert Invoice.objects.get(id=inv_pi.id).state == "paid"
         assert Subscription.objects.get(id=placed_pi.subscription.id).state == "active"
+
+    # 3. Events tagged with a foreign `metadata[samourai_project]` are recorded as `ignored` with
+    #    zero mutations to Core invoices, payments, payment links, or subscriptions.
+    w_foreign = world()
+    Workspace.objects.create(organisation=w_foreign.organisation)
+    placed_foreign = place(w_foreign, offer(), quantity=1)
+    inv_foreign = Invoice.objects.get(id=placed_foreign.invoice.id)
+    link_foreign = payments.create_payment_link(
+        invoice_id=inv_foreign.id,
+        organisation_id=w_foreign.organisation.id,
+        return_url="https://app.localhost/billing",
+    ).link
+    for idx, noncanonical_stamp in enumerate(["zenao", "   ", "", "Kodera", " kodera "]):
+        foreign_res = _post_webhook(
+            client,
+            {
+                "id": f"evt_foreign_project_guard_{idx:02d}",
+                "object": "event",
+                "api_version": "2025-02-24.acacia",
+                "created": int(time.time()) + 10 + idx,
+                "livemode": False,
+                "pending_webhooks": 1,
+                "request": {"id": None, "idempotency_key": None},
+                "type": "checkout.session.completed",
+                "data": {
+                    "object": {
+                        "id": link_foreign.provider_ref,
+                        "object": "checkout.session",
+                        "mode": "payment",
+                        "status": "complete",
+                        "payment_status": "paid",
+                        "payment_intent": f"pi_foreign_project_{idx:02d}",
+                        "amount_total": inv_foreign.total_incl_vat_minor,
+                        "currency": "eur",
+                        "client_reference_id": str(inv_foreign.id),
+                        "metadata": {
+                            "core_invoice_id": str(inv_foreign.id),
+                            "samourai_project": noncanonical_stamp,
+                        },
+                    }
+                },
+            },
+            url=WEBHOOK_URL,
+            include_default_api_version=False,
+        )
+        assert foreign_res.status_code == 200
+        assert foreign_res.json()["status"] == "ignored"
+    assert Invoice.objects.get(id=inv_foreign.id).state == "issued"
+    assert PaymentLink.objects.get(id=link_foreign.id).state == "active"
+    assert Payment.objects.filter(organisation_id=w_foreign.organisation.id).count() == 0
 
 
 @pytest.mark.parametrize(

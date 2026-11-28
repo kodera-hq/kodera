@@ -14,6 +14,7 @@ from core.db.functions import ClockTimestamp
 from core.db.ids import new_uuid7
 from core.db.models import StoredModel
 
+from .configuration import default_stripe_livemode, default_stripe_platform_account_id
 from .states import INVOICE_STATES, ORDER_STATES, PAYMENT_STATES, SUBSCRIPTION_STATES
 
 # The port's event kinds (apps/billing/payments/port.py), written out: models import no adapter.
@@ -894,6 +895,8 @@ class PaymentLink(StoredModel):
     currency = models.TextField()
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
+    stripe_account_id = models.TextField(null=True, blank=True)  # noqa: DJ001 - non-Stripe or pre-cutover
+    stripe_livemode = models.BooleanField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -911,6 +914,11 @@ class PaymentLink(StoredModel):
             ),
             models.CheckConstraint(
                 name="billing_paymentlink_amount_valid", condition=Q(amount_minor__gt=0)
+            ),
+            models.CheckConstraint(
+                name="billing_paymentlink_stripe_acct_valid",
+                condition=Q(stripe_account_id__isnull=True)
+                | Q(stripe_account_id__regex=r"^acct_[A-Za-z0-9_]+$"),
             ),
         ]
 
@@ -1124,6 +1132,8 @@ class WorkspaceBoostGrant(StoredModel):
     stripe_payment_intent_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned on settlement
     idempotency_key = models.TextField()
     request_sha256 = models.TextField()
+    stripe_account_id = models.TextField(null=True, blank=True)  # noqa: DJ001 - non-Stripe or pre-cutover
+    stripe_livemode = models.BooleanField(null=True, blank=True)
     pii_scrubbed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -1193,6 +1203,11 @@ class WorkspaceBoostGrant(StoredModel):
                 condition=Q(activated_at__isnull=True)
                 | Q(expires_at__isnull=True)
                 | Q(expires_at__gt=F("activated_at")),
+            ),
+            models.CheckConstraint(
+                name="billing_boost_stripe_acct_valid",
+                condition=Q(stripe_account_id__isnull=True)
+                | Q(stripe_account_id__regex=r"^acct_[A-Za-z0-9_]+$"),
             ),
         ]
         indexes = [
@@ -1266,7 +1281,8 @@ class CreatorConnectAccount(StoredModel):
         "workspaces.Workspace", on_delete=models.RESTRICT, related_name="+"
     )
     owner_user_id = models.UUIDField(null=True, blank=True)
-    stripe_platform_account_id = models.TextField(default="acct_1QhZ8fRwfVmWKPLR")
+    stripe_platform_account_id = models.TextField(default=default_stripe_platform_account_id)
+    stripe_livemode = models.BooleanField(null=True, blank=True, default=default_stripe_livemode)
     stripe_connect_account_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - persisted before resumable link
     onboarding_state = models.TextField(default="intent_recorded")
     operation_idempotency_key = models.TextField()
@@ -1426,6 +1442,8 @@ class VipMembershipEntitlement(StoredModel):
     stripe_payment_intent_id = models.TextField(null=True, blank=True, unique=True)  # noqa: DJ001 - assigned on settlement
     idempotency_key = models.TextField()
     request_sha256 = models.TextField()
+    stripe_account_id = models.TextField(null=True, blank=True)  # noqa: DJ001 - non-Stripe or pre-cutover
+    stripe_livemode = models.BooleanField(null=True, blank=True)
     pii_scrubbed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -1489,6 +1507,11 @@ class VipMembershipEntitlement(StoredModel):
                         & Q(withdrawal_waiver_evidence__isnull=False)
                     )
                 ),
+            ),
+            models.CheckConstraint(
+                name="billing_vipentitlement_stripe_acct_valid",
+                condition=Q(stripe_account_id__isnull=True)
+                | Q(stripe_account_id__regex=r"^acct_[A-Za-z0-9_]+$"),
             ),
             models.CheckConstraint(
                 name="billing_vipentitlement_window_valid",

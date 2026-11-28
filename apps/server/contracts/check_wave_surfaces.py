@@ -64,6 +64,7 @@ def validate(document: dict[str, Any]) -> None:
         "0.60.0",
         "0.61.0",
         "0.62.0",
+        "0.62.1",
     }:
         raise ValueError("version")
     operations = {
@@ -214,6 +215,7 @@ if __name__ == "__main__":
         "0.60.0",
         "0.61.0",
         "0.62.0",
+        "0.62.1",
     }:
         from check_wave4_surfaces import main as wave4_main
 

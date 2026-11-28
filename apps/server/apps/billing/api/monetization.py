@@ -172,6 +172,7 @@ def _run_post(
         )
     except (
         vip_connect.ConnectOutcomeUnknownError,
+        vip_connect.ConnectPlatformMismatchError,
         vip_connect.ConnectAccountNotReadyError,
     ) as exc:
         detail = (
@@ -185,6 +186,13 @@ def _run_post(
             "Connect account not ready",
             request_id,
             detail,
+        )
+    except vip_connect.ConnectPlatformConfigurationError:
+        response = _json_problem(
+            503,
+            "upstream-unavailable",
+            "Payment platform configuration unavailable",
+            request_id,
         )
     except (
         payment_services.ReturnUrlRefusedError,

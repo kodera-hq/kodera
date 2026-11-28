@@ -102,7 +102,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.60.0: opaque KVKB1 key-backup archive and confidential document collaboration session metadata; discovery unchanged.
 # Rebound at 0.61.0: cardless freemium PME self-serve workspace creation and shared_realm/plan_tier Me projection; discovery unchanged.
 # Rebound at 0.62.0: conditional document subteam grants; discovery unchanged.
-UNCHANGED_SHA = "551c2ae26b2b7308f49498e9699f74188bddd4818855ef05285ca20072c65677"
+# Rebound at 0.62.1: receiveStripeWebhook api_version enum gains 2025-02-24.acacia and samourai_project prose; discovery unchanged (APPROVED_SHA invariant; UNCHANGED_SHA hashes non-discovery surfaces).
+UNCHANGED_SHA = "6f694e22b59b44d35bf4215af559aeb57ab43701905cd9e74b58df314883e481"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

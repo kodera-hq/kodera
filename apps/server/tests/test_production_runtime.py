@@ -114,6 +114,8 @@ def test_deployment_refuses_unreviewed_process_overrides(key, value):
 
 
 def test_fixed_wsgi_has_no_local_profile_fallback():
+    from gunicorn.config import Config
+
     path = ROOT / "config/deploy_wsgi.py"
     assert path.is_file(), "fixed deployment WSGI entrypoint missing"
     assert '"config.settings.deploy"' in path.read_text()
@@ -121,10 +123,15 @@ def test_fixed_wsgi_has_no_local_profile_fallback():
     command = json.loads(next(line[4:] for line in docker.splitlines() if line.startswith("CMD ")))
     assert command == [
         "gunicorn",
+        "--no-control-socket",
         "--config",
         "config/gunicorn.py",
         "config.deploy_wsgi:application",
     ], "production command is not fixed Gunicorn"
+    parsed = Config().parser().parse_args(command[1:])
+    assert parsed.control_socket_disable is True
+    assert parsed.config == "config/gunicorn.py"
+    assert parsed.args == ["config.deploy_wsgi:application"]
 
 
 @pytest.mark.parametrize("discovery_key", [None, "malformed", "Y" * 43 + "="])
@@ -837,6 +844,7 @@ def test_actual_pinned_gunicorn_accepts_source_and_disables_forwarder_headers(mo
     assert actual.forwarded_allow_ips == []
     assert actual.secure_scheme_headers == {}
     assert actual.proxy_protocol == "off"
+    assert actual.control_socket_disable is True
     with pytest.raises(TypeError, match="Not a string"):
         actual.set("forwarder_headers", [])
 

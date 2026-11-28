@@ -687,7 +687,6 @@ UPDATE_COLUMNS = (
     *(
         ("billing_creatorconnectaccount", c)
         for c in (
-            "stripe_platform_account_id",
             "stripe_connect_account_id",
             "onboarding_state",
             "operation_idempotency_key",
@@ -1104,6 +1103,19 @@ INSERT_COLUMNS = (
         )
     ),
 )
+
+
+RETIRED_UPDATE_COLUMNS = (("billing_creatorconnectaccount", "stripe_platform_account_id"),)
+
+
+def revoke_retired_update_statements(role: str) -> list[str]:
+    """Revoke column UPDATE grants retired from UPDATE_COLUMNS on existing database roles."""
+    if ROLE.fullmatch(role) is None:
+        raise ValueError("a role name is a lower-case identifier")
+    return [
+        f'REVOKE UPDATE ("{column}") ON TABLE "{table}" FROM "{role}"'
+        for table, column in RETIRED_UPDATE_COLUMNS
+    ]
 
 
 def revoke_broad_insert_statements(role: str) -> list[str]:

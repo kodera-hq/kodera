@@ -176,7 +176,14 @@ def owned_runtime_diagnostics(reference):
 
 def production_command(command):
     require(
-        command == ["gunicorn", "--config", "config/gunicorn.py", "config.deploy_wsgi:application"],
+        command
+        == [
+            "gunicorn",
+            "--no-control-socket",
+            "--config",
+            "config/gunicorn.py",
+            "config.deploy_wsgi:application",
+        ],
         "production command is not fixed Gunicorn",
     )
 

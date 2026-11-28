@@ -14,7 +14,7 @@ from uuid import UUID
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from apps.billing import boosts, monetization_services, vip_connect
+from apps.billing import boosts, monetization_services
 from apps.billing.payments.port import (
     ProviderRefusedError,
     ProviderUnavailableError,
@@ -333,13 +333,19 @@ def publish_marketplace_listing(
             raise ExtensionRefusedError("billing-disabled", 409)
         if not (MIN_PAID_PRICE_EXCL_VAT_MINOR <= price_excl_vat_minor <= MAX_PRICE_EXCL_VAT_MINOR):
             raise ExtensionRefusedError("marketplace_price_invalid", 422)
-        seller = monetization_services.resolve_workspace_seller_connect_account(
-            organisation_id=organisation_id,
-            workspace_id=workspace_id,
-        )
+        from apps.billing import vip_connect
+
+        try:
+            seller = monetization_services.resolve_workspace_seller_connect_account(
+                organisation_id=organisation_id,
+                workspace_id=workspace_id,
+            )
+        except vip_connect.ConnectPlatformConfigurationError as exc:
+            raise ExtensionRefusedError("payment_platform_unavailable", 503) from exc
         if (
             seller is None
             or not seller.stripe_connect_account_id
+            or not seller.platform_matches
             or seller.onboarding_state != "active"
             or not seller.charges_enabled
             or not seller.payouts_enabled
@@ -455,6 +461,8 @@ def checkout_marketplace_listing(
         )
     ).hexdigest()
 
+    from apps.billing import vip_connect
+
     lock_key: int | None = None
     try:
         with transaction.atomic():
@@ -490,18 +498,14 @@ def checkout_marketplace_listing(
                     or prior_idem.listing_id != listing.id
                 ):
                     raise ExtensionRefusedError("idempotency_key_reused", 409)
-                if prior_idem.state == "active" or (
-                    prior_idem.state == "pending"
-                    and prior_idem.checkout_ref is not None
-                    and prior_idem.checkout_url is not None
-                ):
+                if prior_idem.state == "active":
                     return _serialize_checkout(
                         prior_idem, pricing_mode=listing.pricing_mode, replayed=True
                     )
                 if prior_idem.state in ("revoked", "refunded"):
                     raise ExtensionRefusedError("idempotency_key_reused", 409)
-                # `state == 'pending'` with `checkout_ref is None` is a recoverable retry after a
-                # transient provider outage (`503`): reuse the pending row cleanly below.
+                # `state == 'pending'` is verified against active seller platform/mode readiness
+                # before replaying a cached checkout URL or retrying session creation below.
 
             if listing.pricing_mode not in ("free", "one_time"):
                 raise ExtensionRefusedError("marketplace_pricing_mode_invalid", 422)
@@ -579,12 +583,17 @@ def checkout_marketplace_listing(
             if not isinstance(return_url, str) or not return_url.strip():
                 raise ExtensionRefusedError("marketplace_return_url_required", 422)
 
-            seller = monetization_services.resolve_workspace_seller_connect_account(
-                organisation_id=organisation_id,
-                workspace_id=workspace_id,
-            )
+            try:
+                seller = monetization_services.resolve_workspace_seller_connect_account(
+                    organisation_id=organisation_id,
+                    workspace_id=workspace_id,
+                    for_update=True,
+                )
+            except vip_connect.ConnectPlatformConfigurationError as exc:
+                raise ExtensionRefusedError("payment_platform_unavailable", 503) from exc
             if (
                 seller is None
+                or not seller.platform_matches
                 or not seller.stripe_connect_account_id
                 or seller.onboarding_state != "active"
                 or not seller.charges_enabled
@@ -592,6 +601,44 @@ def checkout_marketplace_listing(
                 or listing.seller_connect_account_id != seller.stripe_connect_account_id
             ):
                 raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
+            if prior_idem is not None and prior_idem.state == "pending":
+                if (
+                    prior_idem.stripe_account_id,
+                    prior_idem.stripe_livemode,
+                ) != (
+                    seller.stripe_platform_account_id,
+                    seller.stripe_livemode,
+                ):
+                    raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
+                if prior_idem.checkout_ref is not None and prior_idem.checkout_url is not None:
+                    return _serialize_checkout(
+                        prior_idem, pricing_mode=listing.pricing_mode, replayed=True
+                    )
+            if (
+                prior_idem is None
+                and existing_for_listing is not None
+                and existing_for_listing.state == "pending"
+                and (
+                    existing_for_listing.stripe_account_id,
+                    existing_for_listing.stripe_livemode,
+                )
+                != (
+                    seller.stripe_platform_account_id,
+                    seller.stripe_livemode,
+                )
+            ):
+                if (
+                    existing_for_listing.checkout_ref is not None
+                    or existing_for_listing.payment_intent_id is not None
+                ):
+                    raise ExtensionRefusedError("checkout_already_pending", 409)
+                existing_for_listing.state = "revoked"
+                existing_for_listing.revoked_at = timezone.now()
+                existing_for_listing.checkout_url = None
+                existing_for_listing.save(
+                    update_fields=["state", "revoked_at", "checkout_url", "updated_at"]
+                )
+                existing_for_listing = None
 
             buyer_user_id = membership_user_id(membership_id=principal.membership_id)
             reusable_pending = prior_idem or existing_for_listing
@@ -620,6 +667,8 @@ def checkout_marketplace_listing(
                     buyer_membership_id=principal.membership_id,
                     listing=listing,
                     state="pending",
+                    stripe_account_id=seller.stripe_platform_account_id,
+                    stripe_livemode=seller.stripe_livemode,
                     idempotency_key=idempotency_key,
                     request_sha256=request_digest,
                 )
@@ -690,39 +739,109 @@ def checkout_marketplace_listing(
             # `Idempotency-Key` (CONVENTIONS §8 `5xx` retry) or a fresh key recovers cleanly!
             raise ExtensionRefusedError("marketplace_payment_provider_unavailable", 503) from exc
 
+        stale_session_to_cancel: tuple[list[str], str | None, bool | None] | None = None
         with transaction.atomic():
+            listing_after = ExtensionMarketplaceListing.objects.select_for_update().get(
+                id=listing.id
+            )
+            try:
+                seller_after = monetization_services.resolve_workspace_seller_connect_account(
+                    organisation_id=organisation_id,
+                    workspace_id=workspace_id,
+                    for_update=True,
+                )
+            except vip_connect.ConnectPlatformConfigurationError:
+                seller_after = None
             entitlement = MarketplaceEntitlement.objects.select_for_update().get(id=entitlement_id)
-            entitlement.checkout_ref = str(issued["checkout_session_id"])
-            entitlement.checkout_url = str(issued["checkout_url"])
-            entitlement.gross_excl_vat_minor = int(issued["gross_excl_vat_minor"])
-            entitlement.vat_amount_minor = int(issued["vat_amount_minor"])
-            entitlement.total_incl_vat_minor = int(issued["total_incl_vat_minor"])
-            entitlement.application_fee_amount_minor = int(issued["application_fee_amount_minor"])
-            entitlement.save(
-                update_fields=[
-                    "checkout_ref",
-                    "checkout_url",
-                    "gross_excl_vat_minor",
-                    "vat_amount_minor",
-                    "total_incl_vat_minor",
-                    "application_fee_amount_minor",
-                    "updated_at",
-                ]
+            seller_still_valid = (
+                entitlement.state == "pending"
+                and listing_after.published_at is not None
+                and listing_after.revoked_at is None
+                and seller_after is not None
+                and seller_after.platform_matches
+                and seller_after.stripe_connect_account_id == seller_account_id
+                and listing_after.seller_connect_account_id == seller_account_id
+                and seller_after.onboarding_state == "active"
+                and seller_after.charges_enabled
+                and seller_after.payouts_enabled
+                and (entitlement.stripe_account_id, entitlement.stripe_livemode)
+                == (seller_after.stripe_platform_account_id, seller_after.stripe_livemode)
             )
-            services.audit(
-                "marketplace_checkout_started",
-                principal,
-                organisation_id,
-                listing_id,
-                {
-                    "listing_id": str(listing_id),
-                    "pricing_mode": listing_pricing_mode,
-                    "state": "pending",
-                },
+            stale_refs: list[str] = []
+            if not seller_still_valid:
+                stale_refs.append(str(issued["checkout_session_id"]))
+                if entitlement.checkout_ref and entitlement.checkout_ref != stale_refs[0]:
+                    stale_refs.append(str(entitlement.checkout_ref))
+                if entitlement.state == "pending":
+                    entitlement.state = "revoked"
+                    entitlement.revoked_at = timezone.now()
+                    entitlement.checkout_url = None
+                    entitlement.save(
+                        update_fields=["state", "revoked_at", "checkout_url", "updated_at"]
+                    )
+                stale_session_to_cancel = (
+                    stale_refs,
+                    entitlement.stripe_account_id,
+                    entitlement.stripe_livemode,
+                )
+            elif entitlement.checkout_ref is not None and entitlement.checkout_url is not None:
+                return _serialize_checkout(
+                    entitlement, pricing_mode=listing_pricing_mode, replayed=True
+                )
+            else:
+                entitlement.checkout_ref = str(issued["checkout_session_id"])
+                entitlement.checkout_url = str(issued["checkout_url"])
+                entitlement.gross_excl_vat_minor = int(issued["gross_excl_vat_minor"])
+                entitlement.vat_amount_minor = int(issued["vat_amount_minor"])
+                entitlement.total_incl_vat_minor = int(issued["total_incl_vat_minor"])
+                entitlement.application_fee_amount_minor = int(
+                    issued["application_fee_amount_minor"]
+                )
+                entitlement.save(
+                    update_fields=[
+                        "checkout_ref",
+                        "checkout_url",
+                        "gross_excl_vat_minor",
+                        "vat_amount_minor",
+                        "total_incl_vat_minor",
+                        "application_fee_amount_minor",
+                        "updated_at",
+                    ]
+                )
+                services.audit(
+                    "marketplace_checkout_started",
+                    principal,
+                    organisation_id,
+                    listing_id,
+                    {
+                        "listing_id": str(listing_id),
+                        "pricing_mode": listing_pricing_mode,
+                        "state": "pending",
+                    },
+                )
+                return _serialize_checkout(
+                    entitlement, pricing_mode=listing_pricing_mode, replayed=False
+                )
+
+        if stale_session_to_cancel is None:
+            raise RuntimeError("unreachable: marketplace checkout neither saved nor revoked")
+        session_refs, bound_acct, bound_mode = stale_session_to_cancel
+        import contextlib
+
+        from apps.billing.payments.services import connect_checkout_binding_matches_runtime
+
+        if connect_checkout_binding_matches_runtime(
+            stripe_account_id=bound_acct, stripe_livemode=bound_mode
+        ):
+            active_provider = (
+                provider
+                if provider is not None
+                else monetization_services.payments_pkg.configured_provider()
             )
-            return _serialize_checkout(
-                entitlement, pricing_mode=listing_pricing_mode, replayed=False
-            )
+            for session_ref in session_refs:
+                with contextlib.suppress(Exception):
+                    active_provider.cancel_link(session_ref)
+        raise ExtensionRefusedError("marketplace_connect_account_not_ready", 409)
     finally:
         if lock_key is not None:
             _release_checkout_key_lock(lock_key)
@@ -767,6 +886,17 @@ def settle_marketplace_checkout(
     return entitlement
 
 
+def _marketplace_entitlement_matches_runtime_stripe(
+    entitlement: MarketplaceEntitlement,
+) -> bool:
+    from apps.billing.payments.services import connect_checkout_binding_matches_runtime
+
+    return connect_checkout_binding_matches_runtime(
+        entitlement.stripe_account_id,
+        entitlement.stripe_livemode,
+    )
+
+
 @transaction.atomic
 def try_settle_stripe_checkout_session(
     *,
@@ -794,6 +924,8 @@ def try_settle_stripe_checkout_session(
     if entitlement is None:
         return None
     org_id = entitlement.organisation_id
+    if not _marketplace_entitlement_matches_runtime_stripe(entitlement):
+        return "mismatch", org_id, entitlement.id
     if has_meta_entitlement and meta_entitlement_id != entitlement.id:
         return "mismatch", org_id, entitlement.id
     if event_type == "checkout.session.completed":
@@ -867,6 +999,8 @@ def try_settle_stripe_payment_intent(
     if entitlement is None:
         return None
     org_id = entitlement.organisation_id
+    if not _marketplace_entitlement_matches_runtime_stripe(entitlement):
+        return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
     if has_meta_entitlement and meta_entitlement_id != entitlement.id:
         return "mismatch", org_id, entitlement.id, entitlement.checkout_ref
     if has_meta_workspace and meta_workspace_id != entitlement.workspace_id:
@@ -908,6 +1042,10 @@ def try_cancel_stripe_checkout_session(
     )
     if entitlement is None:
         return None
+    if not (
+        entitlement.stripe_account_id is None and entitlement.stripe_livemode is None
+    ) and not _marketplace_entitlement_matches_runtime_stripe(entitlement):
+        return "mismatch", entitlement.organisation_id
     if entitlement.state != "pending" or entitlement.revoked_at is not None:
         return "ignored", entitlement.organisation_id
     ts = occurred_at or timezone.now()
@@ -951,6 +1089,8 @@ def try_revoke_stripe_marketplace_entitlement(
     if entitlement is None:
         return None
     org_id = entitlement.organisation_id
+    if not _marketplace_entitlement_matches_runtime_stripe(entitlement):
+        return "mismatch", org_id, entitlement.id
     if has_meta_entitlement and meta_entitlement_id != entitlement.id:
         return "mismatch", org_id, entitlement.id
     if (

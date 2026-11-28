@@ -28,4 +28,5 @@ secure_scheme_headers: dict[str, str] = {}
 forwarder_headers = ""
 proxy_protocol = False
 proxy_allow_ips = ""
+control_socket_disable = True
 worker_tmp_dir = "/dev/shm"  # noqa: S108 - private container tmpfs heartbeat files

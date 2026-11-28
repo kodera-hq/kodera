@@ -25,4 +25,4 @@ COPY room_access/ ./room_access/
 # Enterprise Edition named context (`--build-context ee_src=ee`); empty in Community builds.
 COPY --from=ee_src / /app/ee/
 USER 10001:10001
-CMD ["gunicorn", "--config", "config/gunicorn.py", "config.deploy_wsgi:application"]
+CMD ["gunicorn", "--no-control-socket", "--config", "config/gunicorn.py", "config.deploy_wsgi:application"]

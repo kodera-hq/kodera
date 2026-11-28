@@ -294,10 +294,14 @@ export interface paths {
          * Receive a signed Stripe webhook event for idempotent billing reconciliation
          * @description Public webhook endpoint exempt from OIDC bearer tokens and authenticated strictly via
          *     `Stripe-Signature` HMAC-SHA256 (`t=...,v1=...`) within a 300-second replay window.
-         *     Enforces a pinned `api_version` allowlist (`2024-06-20`, `2024-12-18.acacia`) fail-closed
-         *     before database writes, closes business-state dispatch to the four G4 collection events
-         *     (`checkout.session.completed`, `checkout.session.expired`, `payment_intent.succeeded`,
-         *     `charge.refunded`), and deduplicates deliveries by `stripe_event_id`.
+         *     Enforces a pinned `api_version` allowlist (`2024-06-20`, `2024-12-18.acacia`,
+         *     `2025-02-24.acacia`) fail-closed before database writes, restricts business-state dispatch to
+         *     the seven handled Stripe event types — the six direct-collection rollout events
+         *     (`checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+         *     `checkout.session.async_payment_failed`, `checkout.session.expired`,
+         *     `payment_intent.succeeded`, `charge.refunded`) plus Volet B Connect dispute intake
+         *     (`charge.dispute.created`) — ignores events tagged with a non-`kodera` `samourai_project`
+         *     metadata stamp, and deduplicates deliveries by `stripe_event_id`.
          */
         post: operations["receiveStripeWebhook"];
         delete?: never;
@@ -13425,7 +13429,7 @@ export interface components {
          * @example {
          *       "id": "evt_synthetic_0001",
          *       "type": "checkout.session.completed",
-         *       "api_version": "2024-12-18.acacia",
+         *       "api_version": "2025-02-24.acacia",
          *       "created": 1763136400,
          *       "livemode": false,
          *       "data": {
@@ -13440,9 +13444,9 @@ export interface components {
             id: string;
             type: string;
             /** @enum {string} */
-            api_version: "2024-06-20" | "2024-12-18.acacia";
+            api_version: "2024-06-20" | "2024-12-18.acacia" | "2025-02-24.acacia";
             created: number;
-            livemode?: boolean;
+            livemode: boolean;
             data: {
                 object: {
                     [key: string]: unknown;

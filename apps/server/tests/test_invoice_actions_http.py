@@ -503,3 +503,41 @@ def test_mutation_a_step_handed_no_issued_link_fails_the_create(w, placed, fake,
     found = created_errors(post(w, w.owner, placed.invoice.id))
     assert found and found[0] == "createPaymentLink answered 500, not 201", found
     assert fake.links == [] and links(placed) == []
+
+
+def test_foreign_or_unverifiable_payment_link_replay_is_refused_across_all_states(
+    w, placed, fake, settings
+):
+    from django.test import override_settings
+
+    settings.KODERA_STRIPE_PLATFORM_ACCOUNT_ID = None
+    settings.KODERA_STRIPE_EXPECTED_LIVEMODE = None
+    replay_key = "0000000000000010"
+    res = post(w, w.owner, placed.invoice.id, body={"return_url": RETURN}, key=replay_key)
+    first = created(res)
+    link_row = PaymentLink.objects.get(invoice_id=placed.invoice.id, url=first["url"])
+    # Simulate a pre-cutover Stripe row recorded on the retired company account.
+    PaymentLink.objects.filter(id=link_row.id).update(
+        provider="stripe",
+        stripe_account_id="acct_1QhZ8fRwfVmWKPLR",
+        stripe_livemode=True,
+    )
+    with override_settings(
+        KODERA_STRIPE_PLATFORM_ACCOUNT_ID="acct_1UgN9ORytJJnrEun",
+        KODERA_STRIPE_EXPECTED_LIVEMODE=True,
+    ):
+        for state in ("active", "cancelled", "expired", "used"):
+            PaymentLink.objects.filter(id=link_row.id).update(state=state)
+            replay = post(
+                w, w.owner, placed.invoice.id, body={"return_url": RETURN}, key=replay_key
+            )
+            problem(replay, LINK, "post", 409, "conflict")
+            assert b"checkout" not in replay.content
+
+        # An unverifiable cached URL (no matching PaymentLink row) also fails closed when a
+        # runtime Stripe binding is configured.
+        PaymentLink.objects.filter(id=link_row.id).update(url="https://pay.example/other")
+        missing_replay = post(
+            w, w.owner, placed.invoice.id, body={"return_url": RETURN}, key=replay_key
+        )
+        problem(missing_replay, LINK, "post", 409, "conflict")

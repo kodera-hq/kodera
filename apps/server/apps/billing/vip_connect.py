@@ -44,6 +44,10 @@ from .boosts import (
     split_gross_refund,
     verify_b2c_withdrawal_waiver,
 )
+from .configuration import (
+    default_stripe_livemode,
+    default_stripe_platform_account_id,
+)
 from .models import (
     CreatorConnectAccount,
     CreatorSplitLedgerEntry,
@@ -64,7 +68,6 @@ from .services import IDEMPOTENCY_KEY, IdempotencyKeyReuseError, period_end
 from .vat import Regime, regime_for
 
 DEFAULT_STRIPE_DISPUTE_FEE_MINOR = 1500
-DEFAULT_STRIPE_PLATFORM_ACCOUNT_ID = "acct_1QhZ8fRwfVmWKPLR"
 
 
 class VipConnectValidationError(ValueError):
@@ -73,6 +76,14 @@ class VipConnectValidationError(ValueError):
 
 class ConnectOutcomeUnknownError(RuntimeError):
     """Prior Connect account creation had an unknown outcome; operator reconciliation required."""
+
+
+class ConnectPlatformMismatchError(RuntimeError):
+    """Persisted Stripe platform account or livemode differs from the active runtime binding."""
+
+
+class ConnectPlatformConfigurationError(RuntimeError):
+    """Server Stripe platform runtime configuration is missing or malformed (`503`)."""
 
 
 class ConnectAccountNotReadyError(PermissionError):
@@ -103,12 +114,33 @@ class ConnectProviderPort(Protocol):
 
 
 def _platform_account_id() -> str:
-    configured = getattr(
-        settings, "KODERA_STRIPE_PLATFORM_ACCOUNT_ID", DEFAULT_STRIPE_PLATFORM_ACCOUNT_ID
+    try:
+        resolved = default_stripe_platform_account_id()
+    except ValueError as exc:
+        raise ConnectPlatformConfigurationError(str(exc)) from exc
+    if not CONNECT_ACCOUNT_ID.fullmatch(resolved):
+        raise ConnectPlatformConfigurationError("invalid KODERA_STRIPE_PLATFORM_ACCOUNT_ID")
+    return resolved
+
+
+def _platform_livemode() -> bool:
+    return default_stripe_livemode()
+
+
+def account_matches_runtime_platform(account: CreatorConnectAccount) -> bool:
+    expected_platform = _platform_account_id()
+    expected_livemode = _platform_livemode()
+    return (
+        account.stripe_platform_account_id == expected_platform
+        and account.stripe_livemode is expected_livemode
     )
-    if not isinstance(configured, str) or not CONNECT_ACCOUNT_ID.fullmatch(configured):
-        return DEFAULT_STRIPE_PLATFORM_ACCOUNT_ID
-    return configured
+
+
+def _require_matching_platform(account: CreatorConnectAccount) -> None:
+    if not account_matches_runtime_platform(account):
+        raise ConnectPlatformMismatchError(
+            "Connect account belongs to another Stripe platform or mode; explicit operator reconciliation required"
+        )
 
 
 def _tin_aad(organisation_id: UUID, workspace_id: UUID, country: str) -> bytes:
@@ -616,6 +648,7 @@ def initiate_or_resume_connect_onboarding(
                 "organisation_id": organisation_id,
                 "owner_user_id": owner_user_id,
                 "stripe_platform_account_id": _platform_account_id(),
+                "stripe_livemode": _platform_livemode(),
                 "onboarding_state": "intent_recorded",
                 "operation_idempotency_key": operation_idempotency_key,
                 "platform_fee_bps": platform_fee_bps,
@@ -634,24 +667,37 @@ def initiate_or_resume_connect_onboarding(
             )
         if account.onboarding_state == "disabled":
             raise ConnectAccountNotReadyError("Connect account is disabled")
+        _require_matching_platform(account)
 
     if account.stripe_connect_account_id is None:
+        from apps.billing.payments.stripe import StripeAccountPreflightError
+
+        issued_idem_key = account.operation_idempotency_key
         try:
             snap = provider.create_connect_account(
-                idempotency_key=account.operation_idempotency_key,
+                idempotency_key=issued_idem_key,
                 country=account.tax_residence_country,
                 seller_legal_name=account.seller_legal_name,
                 workspace_id=str(workspace_id),
             )
+        except StripeAccountPreflightError:
+            # Preflight failed on GET /v1/account before POST /v1/accounts was ever sent; keep
+            # `intent_recorded` so the caller can retry without operator outcome reconciliation.
+            raise
         except ProviderUnavailableError as exc:
             with transaction.atomic():
                 lock_workspace_for_vip(organisation_id)
                 locked = CreatorConnectAccount.objects.select_for_update().get(id=account.id)
-                locked.onboarding_state = "outcome_unknown"
-                locked.last_operation_error = "create_account_outcome_unknown"
-                locked.save(
-                    update_fields=["onboarding_state", "last_operation_error", "updated_at"]
-                )
+                if (
+                    locked.stripe_connect_account_id is None
+                    and locked.operation_idempotency_key == issued_idem_key
+                    and account_matches_runtime_platform(locked)
+                ):
+                    locked.onboarding_state = "outcome_unknown"
+                    locked.last_operation_error = "create_account_outcome_unknown"
+                    locked.save(
+                        update_fields=["onboarding_state", "last_operation_error", "updated_at"]
+                    )
             raise ConnectOutcomeUnknownError(
                 "Connect account creation timed out with unknown outcome"
             ) from exc
@@ -661,6 +707,16 @@ def initiate_or_resume_connect_onboarding(
         with transaction.atomic():
             lock_workspace_for_vip(organisation_id)
             account = CreatorConnectAccount.objects.select_for_update().get(id=account.id)
+            _require_matching_platform(account)
+            if (
+                account.stripe_connect_account_id is not None
+                and account.stripe_connect_account_id != snap.account_id
+            ):
+                raise VipConnectValidationError("persisted stripe_connect_account_id mismatch")
+            if account.operation_idempotency_key != issued_idem_key:
+                raise ConnectPlatformMismatchError(
+                    "Connect account changed concurrently during creation; reconcile before retrying"
+                )
             account.stripe_connect_account_id = snap.account_id
             account.charges_enabled = snap.charges_enabled
             account.payouts_enabled = snap.payouts_enabled
@@ -713,6 +769,7 @@ def reconcile_connect_account_status(
         )
     with transaction.atomic():
         account = CreatorConnectAccount.objects.select_for_update().get(workspace_id=workspace_id)
+        _require_matching_platform(account)
         org_id = account.organisation_id
         acct_id = account.stripe_connect_account_id or known_account_id
         if acct_id is None or not CONNECT_ACCOUNT_ID.fullmatch(acct_id):
@@ -730,6 +787,7 @@ def reconcile_connect_account_status(
     with transaction.atomic():
         lock_workspace_for_vip(org_id)
         account = CreatorConnectAccount.objects.select_for_update().get(workspace_id=workspace_id)
+        _require_matching_platform(account)
         if (
             account.stripe_connect_account_id is not None
             and account.stripe_connect_account_id != snap.account_id
@@ -779,6 +837,7 @@ def create_vip_tier_offer(
             workspace_id=workspace_id,
             organisation_id=organisation_id,
         )
+        _require_matching_platform(connect_account)
         if (
             connect_account.onboarding_state != "active"
             or not connect_account.charges_enabled
@@ -846,15 +905,19 @@ def create_vip_pass_checkout(
         locked_ws = lock_workspace_for_vip(organisation_id)
         if locked_ws is None or locked_ws != workspace_id:
             raise VipConnectValidationError("workspace does not belong to organisation")
-        tier = VipTierOffer.objects.select_related("connect_account").get(
-            id=tier_id,
-            workspace_id=workspace_id,
-            organisation_id=organisation_id,
-            active=True,
-        )
+        try:
+            tier = VipTierOffer.objects.select_related("connect_account").get(
+                id=tier_id,
+                workspace_id=workspace_id,
+                organisation_id=organisation_id,
+                active=True,
+            )
+        except VipTierOffer.DoesNotExist as exc:
+            raise ConnectAccountNotReadyError("VIP tier offer is inactive or unavailable") from exc
         connect_account = CreatorConnectAccount.objects.select_for_update().get(
             id=tier.connect_account_id
         )
+        _require_matching_platform(connect_account)
         if (
             connect_account.onboarding_state != "active"
             or not connect_account.charges_enabled
@@ -919,6 +982,13 @@ def create_vip_pass_checkout(
         if existing is not None:
             if existing.request_sha256 != req_hash:
                 raise IdempotencyKeyReuseError()
+            if (existing.stripe_account_id, existing.stripe_livemode) != (
+                connect_account.stripe_platform_account_id,
+                connect_account.stripe_livemode,
+            ):
+                raise ConnectPlatformMismatchError(
+                    "Pending VIP checkout belongs to another Stripe platform or mode"
+                )
             if existing.stripe_checkout_session_id and existing.stripe_checkout_url:
                 cached_result = (
                     existing,
@@ -928,6 +998,8 @@ def create_vip_pass_checkout(
                     ),
                     quote,
                 )
+            elif existing.state != "pending_payment":
+                raise IdempotencyKeyReuseError()
             else:
                 entitlement = existing
         else:
@@ -958,6 +1030,8 @@ def create_vip_pass_checkout(
                 total_incl_vat_minor=quote.total_incl_vat_minor,
                 application_fee_amount_minor=quote.application_fee_amount_minor,
                 reserved_recovery_minor=reserved_recovery,
+                stripe_account_id=connect_account.stripe_platform_account_id,
+                stripe_livemode=connect_account.stripe_livemode,
                 state="pending_payment",
                 withdrawal_waiver_accepted=waiver_ok,
                 withdrawal_waiver_at=waiver_at,
@@ -1003,10 +1077,47 @@ def create_vip_pass_checkout(
         cancel_pending_vip_entitlement(entitlement_id=entitlement.id)
         raise
 
+    stale_sessions_to_cancel: list[str] = []
+    bound_acct: str | None = None
+    bound_mode: bool | None = None
     with transaction.atomic():
         lock_workspace_for_vip(organisation_id)
+        connect_after = CreatorConnectAccount.objects.select_for_update().get(
+            id=tier.connect_account_id
+        )
+        tier_after = VipTierOffer.objects.select_for_update().get(id=tier.id)
         locked = VipMembershipEntitlement.objects.select_for_update().get(id=entitlement.id)
-        if locked.stripe_checkout_session_id and locked.stripe_checkout_url:
+        seller_still_valid = (
+            locked.state == "pending_payment"
+            and tier_after.active
+            and account_matches_runtime_platform(connect_after)
+            and connect_after.stripe_connect_account_id == destination_acct
+            and connect_after.onboarding_state == "active"
+            and connect_after.charges_enabled
+            and connect_after.payouts_enabled
+            and (locked.stripe_account_id, locked.stripe_livemode)
+            == (connect_after.stripe_platform_account_id, connect_after.stripe_livemode)
+        )
+        if not seller_still_valid:
+            bound_acct = locked.stripe_account_id
+            bound_mode = locked.stripe_livemode
+            stale_sessions_to_cancel.append(issued_link.provider_ref)
+            if (
+                locked.stripe_checkout_session_id
+                and locked.stripe_checkout_session_id != issued_link.provider_ref
+            ):
+                stale_sessions_to_cancel.append(locked.stripe_checkout_session_id)
+            if locked.state == "pending_payment":
+                if locked.reserved_recovery_minor > 0:
+                    connect_after.reserved_recovery_minor = max(
+                        0,
+                        connect_after.reserved_recovery_minor - locked.reserved_recovery_minor,
+                    )
+                    connect_after.save(update_fields=["reserved_recovery_minor", "updated_at"])
+                locked.state = "cancelled"
+                locked.stripe_checkout_url = None
+                locked.save(update_fields=["state", "stripe_checkout_url", "updated_at"])
+        elif locked.stripe_checkout_session_id and locked.stripe_checkout_url:
             return (
                 locked,
                 ProviderLink(
@@ -1015,12 +1126,29 @@ def create_vip_pass_checkout(
                 ),
                 quote,
             )
-        locked.stripe_checkout_session_id = issued_link.provider_ref
-        locked.stripe_checkout_url = issued_link.url
-        locked.save(
-            update_fields=["stripe_checkout_session_id", "stripe_checkout_url", "updated_at"]
-        )
-        return locked, issued_link, quote
+        else:
+            locked.stripe_checkout_session_id = issued_link.provider_ref
+            locked.stripe_checkout_url = issued_link.url
+            locked.save(
+                update_fields=["stripe_checkout_session_id", "stripe_checkout_url", "updated_at"]
+            )
+            return locked, issued_link, quote
+
+    if not stale_sessions_to_cancel:
+        raise RuntimeError("unreachable: VIP checkout neither saved nor cancelled")
+    import contextlib
+
+    from apps.billing.payments.services import connect_checkout_binding_matches_runtime
+
+    if connect_checkout_binding_matches_runtime(
+        stripe_account_id=bound_acct, stripe_livemode=bound_mode
+    ):
+        for session_ref in stale_sessions_to_cancel:
+            with contextlib.suppress(Exception):
+                provider.cancel_link(session_ref)
+    raise ConnectPlatformMismatchError(
+        "Seller Connect account binding changed while VIP checkout was in flight"
+    )
 
 
 def cancel_pending_vip_entitlement(*, entitlement_id: UUID) -> bool:
@@ -1046,7 +1174,8 @@ def cancel_pending_vip_entitlement(*, entitlement_id: UUID) -> bool:
             )
             connect_account.save(update_fields=["reserved_recovery_minor", "updated_at"])
         entitlement.state = "cancelled"
-        entitlement.save(update_fields=["state", "updated_at"])
+        entitlement.stripe_checkout_url = None
+        entitlement.save(update_fields=["state", "stripe_checkout_url", "updated_at"])
         return True
 
 
